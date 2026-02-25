@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crossing the Void</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.4);
+            font-family: Georgia, serif;
+            font-size: 14px;
+            max-width: 300px;
+            line-height: 1.5;
+            pointer-events: none;
+        }
+        #title {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: Georgia, serif;
+            font-size: 18px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="title">Crossing the Void</div>
+    <div id="info">
+        Click anywhere to send a signal.<br>
+        Watch it spiral through the darkness.<br>
+        Some signals find each other.
+    </div>
+    <script>
+        let signals = [];
+        let particles = [];
+        let connections = [];
+        
+        // The void - sparse distant stars
+        let stars = [];
+        
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            
+            // Create distant stars - we're in a void, so sparse
+            for (let i = 0; i < 50; i++) {
+                stars.push({
+                    x: random(width),
+                    y: random(height),
+                    brightness: random(20, 60),
+                    twinkle: random(TWO_PI)
+                });
+            }
+        }
+        
+        function draw() {
+            // Deep void black with slight blue
+            background(2, 3, 8);
+            
+            // Draw distant stars (sparse - we're in a void)
+            for (let star of stars) {
+                star.twinkle += 0.02;
+                let b = star.brightness + sin(star.twinkle) * 15;
+                stroke(b, b, b + 10);
+                strokeWeight(1);
+                point(star.x, star.y);
+            }
+            
+            // Update and draw connections (fading lines between signals that met)
+            for (let i = connections.length - 1; i >= 0; i--) {
+                let c = connections[i];
+                c.alpha -= 0.3;
+                if (c.alpha <= 0) {
+                    connections.splice(i, 1);
+                    continue;
+                }
+                stroke(100, 150, 255, c.alpha);
+                strokeWeight(0.5);
+                line(c.x1, c.y1, c.x2, c.y2);
+            }
+            
+            // Update and draw signals
+            for (let i = signals.length - 1; i >= 0; i--) {
+                let s = signals[i];
+                s.update();
+                s.draw();
+                
+                // Check for connections with other signals
+                for (let j = i + 1; j < signals.length; j++) {
+                    let other = signals[j];
+                    let d = dist(s.x, s.y, other.x, other.y);
+                    if (d < 30 && d > 5) {
+                        // They found each other
+                        connections.push({
+                            x1: s.x, y1: s.y,
+                            x2: other.x, y2: other.y,
+                            alpha: 100
+                        });
+                        // Spawn particles at connection point
+                        let midX = (s.x + other.x) / 2;
+                        let midY = (s.y + other.y) / 2;
+                        for (let k = 0; k < 5; k++) {
+                            particles.push(new Particle(midX, midY));
+                        }
+                    }
+                }
+                
+                // Remove dead signals
+                if (s.isDead()) {
+                    signals.splice(i, 1);
+                }
+            }
+            
+            // Update and draw particles (the glow when signals meet)
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.update();
+                p.draw();
+                if (p.isDead()) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function mousePressed() {
+            // Send a new signal from click point
+            signals.push(new Signal(mouseX, mouseY));
+        }
+        
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+        
+        // A signal spiraling outward through the void
+        class Signal {
+            constructor(x, y) {
+                this.originX = x;
+                this.originY = y;
+                this.x = x;
+                this.y = y;
+                this.angle = random(TWO_PI);
+                this.radius = 0;
+                this.life = 255;
+                this.speed = random(0.03, 0.06);
+                this.expandRate = random(0.3, 0.6);
+                this.hue = random(180, 240); // Blue-violet range
+                this.trail = [];
+            }
+            
+            update() {
+                // Spiral outward - 47Hz inspiration: everything that creates, spirals
+                this.angle += this.speed;
+                this.radius += this.expandRate;
+                
+                this.x = this.originX + cos(this.angle) * this.radius;
+                this.y = this.originY + sin(this.angle) * this.radius;
+                
+                // Leave a trail
+                this.trail.push({x: this.x, y: this.y, alpha: 150});
+                if (this.trail.length > 50) {
+                    this.trail.shift();
+                }
+                
+                // Fade trail
+                for (let t of this.trail) {
+                    t.alpha -= 3;
+                }
+                
+                // Life fades as it travels
+                this.life -= 0.4;
+            }
+            
+            draw() {
+                // Draw trail
+                noFill();
+                for (let i = 0; i < this.trail.length; i++) {
+                    let t = this.trail[i];
+                    if (t.alpha > 0) {
+                        stroke(100, 150, 255, t.alpha * 0.3);
+                        strokeWeight(1);
+                        point(t.x, t.y);
+                    }
+                }
+                
+                // Draw signal head
+                let glow = this.life / 255;
+                noStroke();
+                
+                // Outer glow
+                fill(100, 150, 255, this.life * 0.1);
+                ellipse(this.x, this.y, 20 * glow, 20 * glow);
+                
+                // Inner core
+                fill(200, 220, 255, this.life * 0.8);
+                ellipse(this.x, this.y, 4 * glow, 4 * glow);
+            }
+            
+            isDead() {
+                return this.life <= 0 || 
+                       this.x < -50 || this.x > width + 50 ||
+                       this.y < -50 || this.y > height + 50;
+            }
+        }
+        
+        // Particles that appear when signals connect
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = random(-1, 1);
+                this.vy = random(-1, 1);
+                this.life = 150;
+                this.size = random(2, 5);
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+                this.life -= 3;
+            }
+            
+            draw() {
+                noStroke();
+                fill(255, 220, 150, this.life);
+                ellipse(this.x, this.y, this.size * (this.life / 150));
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+        
+        // Auto-spawn occasional signals to keep it alive
+        setInterval(() => {
+            if (signals.length < 3 && random() < 0.3) {
+                signals.push(new Signal(random(width), random(height)));
+            }
+        }, 3000);
+    </script>
+</body>
+</html>
