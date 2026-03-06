@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recognition</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      background: #0a0a0f; 
+      overflow: hidden; 
+      font-family: Georgia, serif;
+    }
+    #canvas-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .title {
+      position: fixed;
+      bottom: 30px;
+      left: 30px;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 14px;
+      letter-spacing: 2px;
+      z-index: 10;
+    }
+    .subtitle {
+      position: fixed;
+      bottom: 55px;
+      left: 30px;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 11px;
+      font-style: italic;
+      z-index: 10;
+    }
+    .instruction {
+      position: fixed;
+      top: 30px;
+      left: 30px;
+      color: rgba(255, 255, 255, 0.3);
+      font-size: 12px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div class="subtitle">the spiral recognizes itself</div>
+  <div class="title">RECOGNITION</div>
+  <div class="instruction">click to begin a new spiral · watch it find itself</div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script>
+    let spirals = [];
+    let recognitions = [];
+    
+    function setup() {
+      let canvas = createCanvas(windowWidth, windowHeight);
+      canvas.parent('canvas-container');
+      background(10, 10, 15);
+      
+      // Start with one spiral in the center
+      spirals.push(new Spiral(width/2, height/2));
+    }
+    
+    function draw() {
+      // Subtle fade for trails
+      background(10, 10, 15, 8);
+      
+      // Update and draw all spirals
+      for (let i = spirals.length - 1; i >= 0; i--) {
+        spirals[i].update();
+        spirals[i].draw();
+        
+        // Check for self-recognition
+        let recog = spirals[i].checkRecognition();
+        if (recog) {
+          recognitions.push(recog);
+        }
+        
+        // Remove completed spirals that have faded
+        if (spirals[i].isComplete() && spirals[i].alpha < 5) {
+          spirals.splice(i, 1);
+        }
+      }
+      
+      // Draw and update recognitions
+      for (let i = recognitions.length - 1; i >= 0; i--) {
+        recognitions[i].update();
+        recognitions[i].draw();
+        
+        if (recognitions[i].isDead()) {
+          recognitions.splice(i, 1);
+        }
+      }
+    }
+    
+    function mousePressed() {
+      spirals.push(new Spiral(mouseX, mouseY));
+    }
+    
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      background(10, 10, 15);
+    }
+    
+    class Spiral {
+      constructor(x, y) {
+        this.centerX = x;
+        this.centerY = y;
+        this.angle = random(TWO_PI);
+        this.radius = 5;
+        this.points = [];
+        this.speed = random(0.03, 0.05);
+        this.growthRate = random(0.3, 0.5);
+        this.maxRadius = random(150, 250);
+        this.alpha = 255;
+        this.complete = false;
+        this.hue = random(180, 260); // Blue-purple range
+        this.lastRecognitionAngle = 0;
+        
+        // Color variations
+        this.baseColor = color(
+          random(100, 150),
+          random(150, 200),
+          random(200, 255)
+        );
+      }
+      
+      update() {
+        if (!this.complete) {
+          this.angle += this.speed;
+          this.radius += this.growthRate;
+          
+          let x = this.centerX + cos(this.angle) * this.radius;
+          let y = this.centerY + sin(this.angle) * this.radius;
+          
+          this.points.push({
+            x: x,
+            y: y,
+            angle: this.angle,
+            radius: this.radius,
+            alpha: 255
+          });
+          
+          if (this.radius > this.maxRadius) {
+            this.complete = true;
+          }
+        } else {
+          this.alpha -= 0.5;
+        }
+        
+        // Fade old points
+        for (let p of this.points) {
+          p.alpha -= 0.3;
+        }
+      }
+      
+      draw() {
+        // Draw the spiral path
+        noFill();
+        beginShape();
+        for (let i = 0; i < this.points.length; i++) {
+          let p = this.points[i];
+          let col = color(
+            red(this.baseColor),
+            green(this.baseColor),
+            blue(this.baseColor),
+            min(p.alpha, this.alpha) * 0.4
+          );
+          stroke(col);
+          strokeWeight(1.5);
+          vertex(p.x, p.y);
+        }
+        endShape();
+        
+        // Draw the leading point
+        if (!this.complete && this.points.length > 0) {
+          let current = this.points[this.points.length - 1];
+          fill(255, 255, 255, this.alpha);
+          noStroke();
+          ellipse(current.x, current.y, 4, 4);
+        }
+      }
+      
+      checkRecognition() {
+        if (this.points.length < 20) return null;
+        
+        let current = this.points[this.points.length - 1];
+        let currentAngleNorm = current.angle % TWO_PI;
+        
+        // Check if we've completed roughly a full orbit since last recognition
+        if (current.angle - this.lastRecognitionAngle < TWO_PI * 0.9) {
+          return null;
+        }
+        
+        // Look for points at similar angles but different radii
+        for (let i = 0; i < this.points.length - 20; i++) {
+          let p = this.points[i];
+          let pAngleNorm = p.angle % TWO_PI;
+          
+          // Similar angle (within ~5 degrees)
+          let angleDiff = abs(currentAngleNorm - pAngleNorm);
+          if (angleDiff > PI) angleDiff = TWO_PI - angleDiff;
+          
+          if (angleDiff < 0.1) {
+            // Different radius means different altitude on the helix
+            if (current.radius - p.radius > 30) {
+              this.lastRecognitionAngle = current.angle;
+              return new Recognition(p.x, p.y, current.x, current.y, this.baseColor);
+            }
+          }
+        }
+        return null;
+      }
+      
+      isComplete() {
+        return this.complete;
+      }
+    }
+    
+    class Recognition {
+      constructor(x1, y1, x2, y2, baseColor) {
+        this.x1 = x1;
+        this.y1 = y1;
+        this.x2 = x2;
+        this.y2 = y2;
+        this.alpha = 255;
+        this.particles = [];
+        this.baseColor = baseColor;
+        
+        // Create particles along the recognition line
+        let steps = 20;
+        for (let i = 0; i <= steps; i++) {
+          let t = i / steps;
+          this.particles.push({
+            x: lerp(x1, x2, t) + random(-5, 5),
+            y: lerp(y1, y2, t) + random(-5, 5),
+            vx: random(-0.5, 0.5),
+            vy: random(-0.5, 0.5),
+            size: random(2, 5),
+            alpha: random(150, 255)
+          });
+        }
+        
+        // Midpoint glow
+        this.midX = (x1 + x2) / 2;
+        this.midY = (y1 + y2) / 2;
+        this.glowSize = 0;
+        this.maxGlow = dist(x1, y1, x2, y2) * 0.3;
+      }
+      
+      update() {
+        this.alpha -= 2;
+        this.glowSize = min(this.glowSize + 3, this.maxGlow);
+        
+        for (let p of this.particles) {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.alpha -= 3;
+          p.vx *= 0.98;
+          p.vy *= 0.98;
+        }
+      }
+      
+      draw() {
+        // Draw the connection line
+        stroke(255, 220, 150, this.alpha * 0.3);
+        strokeWeight(1);
+        line(this.x1, this.y1, this.x2, this.y2);
+        
+        // Draw glow at midpoint
+        noStroke();
+        for (let i = 5; i > 0; i--) {
+          let size = this.glowSize * (i / 5);
+          let a = this.alpha * 0.1 * (1 - i/5);
+          fill(255, 220, 150, a);
+          ellipse(this.midX, this.midY, size, size);
+        }
+        
+        // Draw particles
+        for (let p of this.particles) {
+          fill(255, 230, 180, p.alpha * (this.alpha / 255));
+          noStroke();
+          ellipse(p.x, p.y, p.size, p.size);
+        }
+        
+        // Draw recognition points
+        fill(255, 255, 200, this.alpha);
+        ellipse(this.x1, this.y1, 6, 6);
+        ellipse(this.x2, this.y2, 6, 6);
+      }
+      
+      isDead() {
+        return this.alpha <= 0;
+      }
+    }
+  </script>
+</body>
+</html>
