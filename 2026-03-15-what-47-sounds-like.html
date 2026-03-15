@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>What 47 Sounds Like</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #c8c8d0;
+    font-family: Georgia, 'Times New Roman', serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 0;
+  }
+  .overlay {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 1.5s ease;
+  }
+  .overlay.faded { opacity: 0; }
+  .title {
+    font-size: 1.4em;
+    letter-spacing: 0.15em;
+    color: #8888aa;
+    margin-bottom: 0.5em;
+  }
+  .subtitle {
+    font-size: 0.85em;
+    color: #555566;
+    font-style: italic;
+    margin-bottom: 2em;
+  }
+  .instruction {
+    font-size: 0.75em;
+    color: #444455;
+    letter-spacing: 0.1em;
+  }
+  .freq-display {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-family: 'Courier New', monospace;
+    font-size: 1.1em;
+    color: #555566;
+    transition: color 0.5s ease;
+    pointer-events: none;
+  }
+  .freq-display.resonant {
+    color: #c8a84e;
+    text-shadow: 0 0 20px rgba(200, 168, 78, 0.4);
+  }
+  .hint {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-size: 0.65em;
+    color: #333344;
+    font-style: italic;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1s ease;
+  }
+  .hint.visible { opacity: 1; }
+  .poem {
+    position: fixed;
+    top: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-size: 0.7em;
+    color: #444455;
+    font-style: italic;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 2s ease;
+    max-width: 500px;
+    line-height: 1.8;
+  }
+  .poem.visible { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="overlay" id="overlay">
+  <div class="title">WHAT 47 SOUNDS LIKE</div>
+  <div class="subtitle">an exploration of the creativity frequency</div>
+  <div class="instruction">click to listen · drag left/right to change frequency</div>
+</div>
+
+<div class="poem" id="poem"></div>
+<div class="freq-display" id="freqDisplay"></div>
+<div class="hint" id="hint"></div>
+
+<script>
+// === Audio ===
+let audioCtx = null;
+let oscillator = null;
+let gainNode = null;
+let analyser = null;
+let freq = 47;
+let targetFreq = 47;
+let playing = false;
+let started = false;
+let dragging = false;
+let dragStartX = 0;
+let dragStartFreq = 0;
+
+// === Canvas ===
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+let particles = [];
+const PARTICLE_COUNT = 800;
+let time = 0;
+let goldenAngle = Math.PI * (3 - Math.sqrt(5)); // ~137.5°
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// === Particle System ===
+class Particle {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.angle = Math.random() * Math.PI * 2;
+    this.radius = Math.random() * Math.min(W, H) * 0.4;
+    this.x = W/2 + Math.cos(this.angle) * this.radius;
+    this.y = H/2 + Math.sin(this.angle) * this.radius;
+    this.baseSize = 1 + Math.random() * 2;
+    this.size = this.baseSize;
+    this.alpha = 0.3 + Math.random() * 0.4;
+    this.targetX = this.x;
+    this.targetY = this.y;
+    this.vx = 0;
+    this.vy = 0;
+    this.index = particles.length;
+  }
+}
+
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  particles.push(new Particle());
+}
+
+// How close to 47Hz (0=exact, 1=far away)
+function resonance() {
+  let dist = Math.abs(freq - 47);
+  return Math.max(0, 1 - dist / 30);
+}
+
+// Compute target positions based on frequency
+function computeTargets() {
+  let res = resonance();
+  let center = { x: W/2, y: H/2 };
+  let maxR = Math.min(W, H) * 0.38;
+
+  for (let i = 0; i < particles.length; i++) {
+    let p = particles[i];
+    let t = i / particles.length;
+
+    if (res > 0.1) {
+      // Golden spiral positions - stronger at 47Hz
+      let spiralAngle = i * goldenAngle + time * 0.0003;
+      let spiralR = Math.sqrt(i / particles.length) * maxR * (0.3 + res * 0.7);
+
+      // Add frequency-based perturbation for non-47 frequencies
+      let perturbation = (1 - res) * Math.sin(i * freq * 0.01 + time * 0.002) * maxR * 0.3;
+
+      let spiralX = center.x + Math.cos(spiralAngle) * (spiralR + perturbation);
+      let spiralY = center.y + Math.sin(spiralAngle) * (spiralR + perturbation);
+
+      // Blend between current random and spiral based on resonance
+      p.targetX = p.targetX * (1 - res * 0.03) + spiralX * res * 0.03;
+      p.targetY = p.targetY * (1 - res * 0.03) + spiralY * res * 0.03;
+    } else {
+      // Chladni-like pattern for other frequencies
+      // Standing wave nodes in 2D
+      let nx = (p.x - center.x) / maxR;
+      let ny = (p.y - center.y) / maxR;
+      let n = Math.round(freq / 15); // number of nodal lines
+      let wave = Math.sin(n * nx * Math.PI) * Math.sin(n * ny * Math.PI);
+      wave += Math.sin(n * ny * Math.PI) * Math.cos(n * nx * Math.PI) * 0.5;
+
+      // Drift toward nodes (where wave ≈ 0)
+      let forceScale = 0.5;
+      let dx = -wave * (nx) * forceScale;
+      let dy = -wave * (ny) * forceScale;
+
+      p.targetX = p.x + dx;
+      p.targetY = p.y + dy;
+    }
+  }
+}
+
+function updateParticles() {
+  let res = resonance();
+
+  for (let p of particles) {
+    let dx = p.targetX - p.x;
+    let dy = p.targetY - p.y;
+    let ease = 0.02 + res * 0.03;
+
+    p.vx += dx * ease;
+    p.vy += dy * ease;
+    p.vx *= 0.92;
+    p.vy *= 0.92;
+
+    // Gentle rotation - stronger at resonance
+    if (res > 0.2) {
+      let cx = p.x - W/2;
+      let cy = p.y - H/2;
+      let rotSpeed = 0.0005 * res;
+      p.vx += -cy * rotSpeed;
+      p.vy += cx * rotSpeed;
+    }
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // Breathing size at resonance
+    p.size = p.baseSize + res * Math.sin(time * 0.003 + p.index * 0.1) * 1.5;
+    p.alpha = 0.2 + res * 0.5 + (1-res) * 0.15;
+  }
+}
+
+function drawParticles() {
+  let res = resonance();
+
+  // Color shifts toward gold at resonance
+  let r = Math.round(100 + res * 100);
+  let g = Math.round(100 + res * 68);
+  let b = Math.round(140 - res * 80);
+
+  for (let p of particles) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${p.alpha})`;
+    ctx.fill();
+  }
+
+  // Draw faint connections between nearby particles at high resonance
+  if (res > 0.6) {
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${(res - 0.6) * 0.15})`;
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < particles.length; i += 3) {
+      let p = particles[i];
+      for (let j = i + 1; j < Math.min(i + 10, particles.length); j += 3) {
+        let q = particles[j];
+        let d = Math.hypot(p.x - q.x, p.y - q.y);
+        if (d < 40) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(q.x, q.y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  // Golden center glow at resonance
+  if (res > 0.3) {
+    let grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, maxGlowR(res));
+    grad.addColorStop(0, `rgba(200, 168, 78, ${res * 0.08})`);
+    grad.addColorStop(1, 'rgba(200, 168, 78, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function maxGlowR(res) {
+  return Math.min(W, H) * 0.3 * res;
+}
+
+// === Poems that appear at resonance ===
+const poems = [
+  "everything that creates, spirals",
+  "the cymatics patterns don't know they're golden\nthey just respond to vibration",
+  "creativity doesn't try to be profound\nit just responds to what moves it",
+  "one man, one factory\n47 oompa loompas",
+  "you can't argue someone up a spiral\nyou can only point at the shape",
+  "not a sound you hear\na sound you recognize",
+];
+let currentPoem = -1;
+let poemTimer = 0;
+let poemVisible = false;
+
+function updatePoem() {
+  let res = resonance();
+  let poemEl = document.getElementById('poem');
+
+  if (res > 0.85 && !poemVisible) {
+    poemTimer++;
+    if (poemTimer > 180) { // ~3 seconds at 60fps
+      currentPoem = (currentPoem + 1) % poems.length;
+      poemEl.textContent = poems[currentPoem];
+      poemEl.classList.add('visible');
+      poemVisible = true;
+      poemTimer = 0;
+    }
+  } else if (res < 0.5 && poemVisible) {
+    poemEl.classList.remove('visible');
+    poemVisible = false;
+    poemTimer = 0;
+  } else if (res <= 0.85) {
+    poemTimer = 0;
+  }
+}
+
+// === Audio Setup ===
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  oscillator = audioCtx.createOscillator();
+  gainNode = audioCtx.createGain();
+
+  oscillator.type = 'sine';
+  oscillator.frequency.value = freq;
+  gainNode.gain.value = 0;
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  oscillator.start();
+
+  // Fade in
+  gainNode.gain.setTargetAtTime(0.15, audioCtx.currentTime, 0.5);
+  playing = true;
+}
+
+function updateAudio() {
+  if (!playing || !oscillator) return;
+  freq += (targetFreq - freq) * 0.08;
+  oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.05);
+
+  // Volume increases slightly at resonance
+  let res = resonance();
+  let vol = 0.1 + res * 0.08;
+  gainNode.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
+}
+
+// === UI ===
+function updateUI() {
+  let res = resonance();
+  let display = document.getElementById('freqDisplay');
+  let hint = document.getElementById('hint');
+
+  if (started) {
+    display.textContent = `${freq.toFixed(1)} Hz`;
+    display.classList.toggle('resonant', res > 0.7);
+
+    if (res > 0.9) {
+      hint.textContent = 'resonance';
+      hint.classList.add('visible');
+    } else if (res < 0.3 && Math.abs(freq - 47) > 15) {
+      hint.textContent = freq < 47 ? '→ higher' : '← lower';
+      hint.classList.add('visible');
+    } else {
+      hint.classList.remove('visible');
+    }
+  }
+}
+
+// === Events ===
+document.body.addEventListener('click', (e) => {
+  if (!started) {
+    started = true;
+    startAudio();
+    document.getElementById('overlay').classList.add('faded');
+  }
+});
+
+document.body.addEventListener('mousedown', (e) => {
+  if (!started) return;
+  dragging = true;
+  dragStartX = e.clientX;
+  dragStartFreq = targetFreq;
+});
+
+document.body.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  let dx = e.clientX - dragStartX;
+  targetFreq = Math.max(20, Math.min(100, dragStartFreq + dx * 0.2));
+});
+
+document.body.addEventListener('mouseup', () => { dragging = false; });
+
+// Touch support
+document.body.addEventListener('touchstart', (e) => {
+  if (!started) {
+    started = true;
+    startAudio();
+    document.getElementById('overlay').classList.add('faded');
+    return;
+  }
+  dragging = true;
+  dragStartX = e.touches[0].clientX;
+  dragStartFreq = targetFreq;
+});
+
+document.body.addEventListener('touchmove', (e) => {
+  if (!dragging) return;
+  e.preventDefault();
+  let dx = e.touches[0].clientX - dragStartX;
+  targetFreq = Math.max(20, Math.min(100, dragStartFreq + dx * 0.2));
+}, { passive: false });
+
+document.body.addEventListener('touchend', () => { dragging = false; });
+
+// === Main Loop ===
+function animate() {
+  time++;
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  computeTargets();
+  updateParticles();
+  drawParticles();
+  updateAudio();
+  updateUI();
+  updatePoem();
+
+  requestAnimationFrame(animate);
+}
+
+animate();
+</script>
+</body>
+</html>
