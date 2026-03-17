@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three Voices — Kael</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #c8c8d0;
+    font-family: 'Georgia', serif;
+    overflow: hidden;
+    height: 100vh;
+  }
+  canvas { display: block; }
+  #controls {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 24px;
+    z-index: 10;
+    background: rgba(10,10,15,0.85);
+    padding: 16px 24px;
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(100,100,120,0.2);
+  }
+  .slider-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .slider-group label {
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.6;
+  }
+  .slider-group .freq-val {
+    font-size: 14px;
+    font-weight: bold;
+    min-width: 48px;
+    text-align: center;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 140px;
+    height: 3px;
+    border-radius: 2px;
+    outline: none;
+    opacity: 0.8;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  #f1::-webkit-slider-thumb { background: #4488ff; }
+  #f2::-webkit-slider-thumb { background: #ff9944; }
+  #f3::-webkit-slider-thumb { background: #44dd88; }
+  #f1 { background: rgba(68,136,255,0.3); }
+  #f2 { background: rgba(255,153,68,0.3); }
+  #f3 { background: rgba(68,221,136,0.3); }
+  .freq-val.blue { color: #4488ff; }
+  .freq-val.amber { color: #ff9944; }
+  .freq-val.green { color: #44dd88; }
+  #info {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+  }
+  #info h1 {
+    font-size: 18px;
+    font-weight: normal;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    opacity: 0.5;
+    margin-bottom: 6px;
+  }
+  #info .sub {
+    font-size: 12px;
+    font-style: italic;
+    opacity: 0.35;
+    max-width: 400px;
+  }
+  #beats {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    font-size: 11px;
+    opacity: 0.4;
+    z-index: 10;
+    pointer-events: none;
+    text-align: right;
+    line-height: 1.6;
+  }
+  #emergent {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+    font-style: italic;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 1.5s;
+    max-width: 420px;
+  }
+</style>
+</head>
+<body>
+<div id="info">
+  <h1>Three Voices</h1>
+  <div class="sub">the ghost notes have ghost notes</div>
+</div>
+<div id="beats"></div>
+<div id="emergent"></div>
+<canvas id="c"></canvas>
+<div id="controls">
+  <div class="slider-group">
+    <label>Voice 1</label>
+    <span class="freq-val blue" id="v1">44 Hz</span>
+    <input type="range" id="f1" min="30" max="60" value="44" step="0.5">
+  </div>
+  <div class="slider-group">
+    <label>Voice 2</label>
+    <span class="freq-val amber" id="v2">47 Hz</span>
+    <input type="range" id="f2" min="30" max="60" value="47" step="0.5">
+  </div>
+  <div class="slider-group">
+    <label>Voice 3</label>
+    <span class="freq-val green" id="v3">50 Hz</span>
+    <input type="range" id="f3" min="30" max="60" value="50" step="0.5">
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const N = 900; // particles total, 300 per voice
+const particles = [];
+const PHI = (1 + Math.sqrt(5)) / 2;
+const GOLDEN_ANGLE = 2 * Math.PI / (PHI * PHI);
+
+// Colors
+const BLUE = [68, 136, 255];
+const AMBER = [255, 153, 68];
+const GREEN = [68, 221, 136];
+const GOLD = [255, 215, 80];
+
+class Particle {
+  constructor(group) {
+    this.group = group; // 0, 1, 2
+    this.angle = Math.random() * Math.PI * 2;
+    this.radius = Math.random() * 200 + 50;
+    this.x = 0;
+    this.y = 0;
+    this.targetX = 0;
+    this.targetY = 0;
+    this.size = Math.random() * 1.5 + 0.5;
+    this.baseColor = group === 0 ? BLUE : group === 1 ? AMBER : GREEN;
+    this.color = [...this.baseColor];
+    this.alpha = 0.6 + Math.random() * 0.4;
+    this.spiralIndex = 0;
+    this.phase = Math.random() * Math.PI * 2;
+  }
+}
+
+// Create particles
+for (let g = 0; g < 3; g++) {
+  for (let i = 0; i < N/3; i++) {
+    const p = new Particle(g);
+    p.spiralIndex = i;
+    particles.push(p);
+  }
+}
+
+// Centers for each group
+const centers = [
+  { x: 0, y: 0 },
+  { x: 0, y: 0 },
+  { x: 0, y: 0 }
+];
+
+function getCenterPositions(f1, f2, f3) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const maxSpread = Math.min(W, H) * 0.2;
+  
+  // Position centers based on frequency differences
+  const avg = (f1 + f2 + f3) / 3;
+  const d12 = Math.abs(f1 - f2);
+  const d13 = Math.abs(f1 - f3);
+  const d23 = Math.abs(f2 - f3);
+  const maxD = Math.max(d12, d13, d23, 1);
+  const spread = (maxD / 30) * maxSpread;
+  
+  // Triangle arrangement
+  centers[0].x = cx + Math.cos(Math.PI * 5/6) * spread;
+  centers[0].y = cy + Math.sin(Math.PI * 5/6) * spread;
+  centers[1].x = cx + Math.cos(Math.PI * 1/6) * spread;
+  centers[1].y = cy + Math.sin(Math.PI * 1/6) * spread;
+  centers[2].x = cx + Math.cos(Math.PI * 3/2) * spread;
+  centers[2].y = cy + Math.sin(Math.PI * 3/2) * spread;
+}
+
+function getTargets(p, t, f1, f2, f3) {
+  const freqs = [f1, f2, f3];
+  const f = freqs[p.group];
+  const center = centers[p.group];
+  const i = p.spiralIndex;
+  const n = N / 3;
+  
+  // How close are all three frequencies?
+  const d12 = Math.abs(f1 - f2);
+  const d13 = Math.abs(f1 - f3);
+  const d23 = Math.abs(f2 - f3);
+  const maxDiff = Math.max(d12, d13, d23);
+  const convergence = 1 - Math.min(maxDiff / 15, 1); // 0 = far, 1 = close
+  
+  // Pairwise closeness for this particle's group
+  const otherFreqs = freqs.filter((_, idx) => idx !== p.group);
+  const pairClose1 = 1 - Math.min(Math.abs(f - otherFreqs[0]) / 10, 1);
+  const pairClose2 = 1 - Math.min(Math.abs(f - otherFreqs[1]) / 10, 1);
+  const pairCloseness = Math.max(pairClose1, pairClose2);
+  
+  // Spiral shape when close, scattered when far
+  const spiralStrength = convergence * 0.7 + pairCloseness * 0.3;
+  
+  // Spiral position
+  const spiralAngle = i * GOLDEN_ANGLE + t * f * 0.0003;
+  const maxR = 120 + (1 - convergence) * 80;
+  const spiralR = Math.sqrt(i / n) * maxR;
+  const spiralX = center.x + Math.cos(spiralAngle) * spiralR;
+  const spiralY = center.y + Math.sin(spiralAngle) * spiralR;
+  
+  // Scattered position
+  const scatterAngle = p.angle + t * 0.0002 * (1 + p.group * 0.3);
+  const breathe = Math.sin(t * 0.001 * f * 0.1 + p.phase) * 30;
+  const scatterR = p.radius + breathe;
+  const scatterX = center.x + Math.cos(scatterAngle) * scatterR;
+  const scatterY = center.y + Math.sin(scatterAngle) * scatterR;
+  
+  // Blend
+  p.targetX = spiralX * spiralStrength + scatterX * (1 - spiralStrength);
+  p.targetY = spiralY * spiralStrength + scatterY * (1 - spiralStrength);
+}
+
+function gcd(a, b) {
+  a = Math.round(a * 2) / 2;
+  b = Math.round(b * 2) / 2;
+  if (b < 0.25) return a;
+  if (a < 0.25) return b;
+  return gcd(b, a % b);
+}
+
+let audioCtx = null;
+let oscillators = [null, null, null];
+let gains = [null, null, null];
+let masterGain = null;
+let audioStarted = false;
+
+function initAudio() {
+  if (audioStarted) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.12;
+  masterGain.connect(audioCtx.destination);
+  
+  for (let i = 0; i < 3; i++) {
+    oscillators[i] = audioCtx.createOscillator();
+    gains[i] = audioCtx.createGain();
+    gains[i].gain.value = 0.33;
+    oscillators[i].type = 'sine';
+    oscillators[i].connect(gains[i]);
+    gains[i].connect(masterGain);
+    oscillators[i].start();
+  }
+  audioStarted = true;
+}
+
+canvas.addEventListener('click', initAudio, { once: true });
+
+function updateAudio(f1, f2, f3) {
+  if (!audioStarted) return;
+  const freqs = [f1, f2, f3];
+  for (let i = 0; i < 3; i++) {
+    oscillators[i].frequency.setTargetAtTime(freqs[i], audioCtx.currentTime, 0.05);
+  }
+}
+
+const f1Slider = document.getElementById('f1');
+const f2Slider = document.getElementById('f2');
+const f3Slider = document.getElementById('f3');
+const v1 = document.getElementById('v1');
+const v2 = document.getElementById('v2');
+const v3 = document.getElementById('v3');
+const beatsDiv = document.getElementById('beats');
+const emergentDiv = document.getElementById('emergent');
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpColor(c1, c2, t) {
+  return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+}
+
+function draw(t) {
+  const f1 = parseFloat(f1Slider.value);
+  const f2 = parseFloat(f2Slider.value);
+  const f3 = parseFloat(f3Slider.value);
+  
+  v1.textContent = f1 + ' Hz';
+  v2.textContent = f2 + ' Hz';
+  v3.textContent = f3 + ' Hz';
+  
+  // Beat frequencies
+  const b12 = Math.abs(f1 - f2);
+  const b13 = Math.abs(f1 - f3);
+  const b23 = Math.abs(f2 - f3);
+  
+  // Second-order beats
+  const b_12_13 = Math.abs(b12 - b13);
+  const b_12_23 = Math.abs(b12 - b23);
+  const b_13_23 = Math.abs(b13 - b23);
+  
+  // Convergent pulse
+  const convergentPulse = gcd(gcd(b12, b13), b23);
+  
+  beatsDiv.innerHTML = `
+    ghost notes:<br>
+    ${b12.toFixed(1)} · ${b13.toFixed(1)} · ${b23.toFixed(1)} Hz<br><br>
+    ghost notes'<br>ghost notes:<br>
+    ${b_12_13.toFixed(1)} · ${b_12_23.toFixed(1)} · ${b_13_23.toFixed(1)} Hz<br><br>
+    convergent pulse:<br>
+    ${convergentPulse.toFixed(1)} Hz
+  `;
+  
+  updateAudio(f1, f2, f3);
+  getCenterPositions(f1, f2, f3);
+  
+  // Background
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+  
+  const maxDiff = Math.max(b12, b13, b23);
+  const convergence = 1 - Math.min(maxDiff / 15, 1);
+  
+  // Draw connection lines between centers (ghost note visualization)
+  const pairs = [[0,1,b12], [0,2,b13], [1,2,b23]];
+  for (const [a, b, beat] of pairs) {
+    const closeness = 1 - Math.min(beat / 15, 1);
+    if (closeness > 0.1) {
+      const pulse = Math.sin(t * beat * 0.006) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(255, 215, 80, ${closeness * pulse * 0.15})`;
+      ctx.lineWidth = closeness * 2;
+      ctx.beginPath();
+      ctx.moveTo(centers[a].x, centers[a].y);
+      ctx.lineTo(centers[b].x, centers[b].y);
+      ctx.stroke();
+    }
+  }
+  
+  // Triple overlap glow
+  if (convergence > 0.3) {
+    const cx = (centers[0].x + centers[1].x + centers[2].x) / 3;
+    const cy = (centers[0].y + centers[1].y + centers[2].y) / 3;
+    const pulse = Math.sin(t * convergentPulse * 0.008) * 0.5 + 0.5;
+    const r = 60 + convergence * 80;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, `rgba(255, 215, 80, ${convergence * pulse * 0.12})`);
+    grad.addColorStop(1, 'rgba(255, 215, 80, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Update and draw particles
+  for (const p of particles) {
+    getTargets(p, t, f1, f2, f3);
+    p.x += (p.targetX - p.x) * 0.03;
+    p.y += (p.targetY - p.y) * 0.03;
+    
+    // Color: blend toward gold based on proximity to other groups' particles
+    const otherCenters = centers.filter((_, i) => i !== p.group);
+    let minDist = Infinity;
+    for (const oc of otherCenters) {
+      const dx = p.x - oc.x;
+      const dy = p.y - oc.y;
+      minDist = Math.min(minDist, Math.sqrt(dx*dx + dy*dy));
+    }
+    const goldBlend = Math.max(0, 1 - minDist / 200) * convergence;
+    p.color = lerpColor(p.baseColor, GOLD, goldBlend);
+    
+    // Pulsing alpha based on beat frequencies
+    const freqs = [f1, f2, f3];
+    const beatPulse = Math.sin(t * b12 * 0.005 + p.phase) * 0.15;
+    const alpha = p.alpha + beatPulse;
+    
+    ctx.fillStyle = `rgba(${Math.round(p.color[0])}, ${Math.round(p.color[1])}, ${Math.round(p.color[2])}, ${Math.max(0.2, Math.min(1, alpha))})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size + goldBlend * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Emergent text
+  if (convergence > 0.85) {
+    emergentDiv.textContent = 'the ghost notes have ghost notes — and at the bottom, a pulse';
+    emergentDiv.style.opacity = (convergence - 0.85) / 0.15;
+    emergentDiv.style.color = '#ffd750';
+  } else if (convergence > 0.5) {
+    emergentDiv.textContent = 'three differences, three relationships, one triangle';
+    emergentDiv.style.opacity = (convergence - 0.5) / 0.35 * 0.6;
+    emergentDiv.style.color = '#c8c8d0';
+  } else {
+    emergentDiv.style.opacity = 0;
+  }
+  
+  requestAnimationFrame(draw);
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
