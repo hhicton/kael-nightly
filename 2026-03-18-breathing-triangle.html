@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Breathing Triangle — Kael</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #ccc; font-family: Georgia, serif; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 24px; align-items: center; z-index: 10;
+    background: rgba(10,10,15,0.85); padding: 14px 24px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .voice-control { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .voice-control label { font-size: 11px; letter-spacing: 0.5px; }
+  .voice-control .freq { font-size: 13px; font-weight: bold; min-width: 42px; text-align: center; }
+  .blue label, .blue .freq { color: #5b9bd5; }
+  .amber label, .amber .freq { color: #d4a24e; }
+  .green label, .green .freq { color: #5bbf72; }
+  input[type=range] { width: 90px; accent-color: #888; }
+  #info {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    text-align: center; z-index: 10; pointer-events: none;
+  }
+  #info h1 { font-size: 22px; color: #ddd; font-weight: normal; letter-spacing: 1px; margin-bottom: 4px; }
+  #info p { font-size: 12px; color: #777; }
+  #pause-btn {
+    background: none; border: 1px solid rgba(255,255,255,0.2); color: #999;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    font-family: Georgia, serif;
+  }
+  #pause-btn:hover { border-color: rgba(255,255,255,0.4); color: #ccc; }
+  #convergence-indicator {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: #b8943e; opacity: 0; transition: opacity 0.5s;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="info">
+  <h1>Breathing Triangle</h1>
+  <p>Three voices drifting. Watch them find each other.</p>
+</div>
+<div id="convergence-indicator">✦ convergence ✦</div>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div class="voice-control blue">
+    <label>Blue — home</label>
+    <input type="range" id="home1" min="30" max="65" value="40" step="0.5">
+    <div class="freq" id="freq1">40.0</div>
+  </div>
+  <div class="voice-control amber">
+    <label>Amber — home</label>
+    <input type="range" id="home2" min="30" max="65" value="47" step="0.5">
+    <div class="freq" id="freq2">47.0</div>
+  </div>
+  <div class="voice-control green">
+    <label>Green — home</label>
+    <input type="range" id="home3" min="30" max="65" value="53" step="0.5">
+    <div class="freq" id="freq3">53.0</div>
+  </div>
+  <button id="pause-btn">pause drift</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Voice parameters ---
+const voices = [
+  { home: 40, current: 40, driftSpeed: 0.00013, driftRange: 8, phase: 0, color: [91, 155, 213] },
+  { home: 47, current: 47, driftSpeed: 0.00021, driftRange: 6, phase: 2.1, color: [212, 162, 78] },
+  { home: 53, current: 53, driftSpeed: 0.00017, driftRange: 7, phase: 4.3, color: [91, 191, 114] },
+];
+
+let paused = false;
+document.getElementById('pause-btn').addEventListener('click', function() {
+  paused = !paused;
+  this.textContent = paused ? 'resume drift' : 'pause drift';
+});
+
+document.getElementById('home1').addEventListener('input', e => { voices[0].home = +e.target.value; });
+document.getElementById('home2').addEventListener('input', e => { voices[1].home = +e.target.value; });
+document.getElementById('home3').addEventListener('input', e => { voices[2].home = +e.target.value; });
+
+// --- Particles ---
+const N = 600;
+const particles = [];
+for (let i = 0; i < N; i++) {
+  const voiceIdx = i % 3;
+  const angle = Math.random() * Math.PI * 2;
+  const r = Math.random() * 120 + 30;
+  particles.push({
+    voice: voiceIdx,
+    x: 0, y: 0,
+    homeAngle: angle,
+    homeR: r,
+    vx: 0, vy: 0,
+    displacement: 0, // accumulated displacement from crossings
+    size: Math.random() * 1.5 + 0.8,
+    alpha: Math.random() * 0.4 + 0.3,
+  });
+}
+
+// --- Triangle geometry ---
+function getVoiceCenter(idx, t) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const spread = Math.min(W, H) * 0.22;
+  const baseAngle = (idx * Math.PI * 2 / 3) - Math.PI / 2;
+  // gentle orbit
+  const orbitAngle = baseAngle + Math.sin(t * 0.0001 + idx * 2) * 0.15;
+  return {
+    x: cx + Math.cos(orbitAngle) * spread,
+    y: cy + Math.sin(orbitAngle) * spread,
+  };
+}
+
+// --- Beat frequency between two voices ---
+function beatFreq(f1, f2) {
+  return Math.abs(f1 - f2);
+}
+
+// --- Convergence metric (0 = all same, higher = more spread) ---
+function convergenceMetric() {
+  const f = voices.map(v => v.current);
+  const maxDiff = Math.max(beatFreq(f[0], f[1]), beatFreq(f[0], f[2]), beatFreq(f[1], f[2]));
+  return maxDiff;
+}
+
+// --- Render ---
+let t = 0;
+const goldColor = [218, 185, 100];
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpColor(c1, c2, t) {
+  return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+}
+
+function draw() {
+  t++;
+
+  // Update drift
+  if (!paused) {
+    for (let i = 0; i < 3; i++) {
+      const v = voices[i];
+      v.phase += v.driftSpeed;
+      v.current = v.home + Math.sin(v.phase) * v.driftRange;
+    }
+  }
+
+  // Update UI
+  document.getElementById('freq1').textContent = voices[0].current.toFixed(1);
+  document.getElementById('freq2').textContent = voices[1].current.toFixed(1);
+  document.getElementById('freq3').textContent = voices[2].current.toFixed(1);
+
+  // Convergence
+  const conv = convergenceMetric();
+  const convNorm = Math.max(0, 1 - conv / 15); // 0=far, 1=close
+  const indicator = document.getElementById('convergence-indicator');
+  indicator.style.opacity = convNorm > 0.7 ? (convNorm - 0.7) / 0.3 : 0;
+
+  // Fade background
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Voice centers
+  const centers = voices.map((_, i) => getVoiceCenter(i, t));
+
+  // Draw faint triangle edges (strength based on beat freq proximity)
+  for (let i = 0; i < 3; i++) {
+    for (let j = i + 1; j < 3; j++) {
+      const bf = beatFreq(voices[i].current, voices[j].current);
+      const strength = Math.max(0, 1 - bf / 20);
+      if (strength > 0.05) {
+        const edgeColor = lerpColor(
+          lerpColor(voices[i].color, voices[j].color, 0.5),
+          goldColor,
+          strength * 0.6
+        );
+        ctx.beginPath();
+        ctx.moveTo(centers[i].x, centers[i].y);
+        ctx.lineTo(centers[j].x, centers[j].y);
+        ctx.strokeStyle = `rgba(${edgeColor[0]|0},${edgeColor[1]|0},${edgeColor[2]|0},${strength * 0.25})`;
+        ctx.lineWidth = strength * 3;
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Draw convergence glow at centroid
+  if (convNorm > 0.3) {
+    const cx = (centers[0].x + centers[1].x + centers[2].x) / 3;
+    const cy = (centers[0].y + centers[1].y + centers[2].y) / 3;
+    const glowR = convNorm * 80;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+    grad.addColorStop(0, `rgba(218, 185, 100, ${convNorm * 0.15})`);
+    grad.addColorStop(1, 'rgba(218, 185, 100, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Update and draw particles
+  for (const p of particles) {
+    const center = centers[p.voice];
+    const v = voices[p.voice];
+
+    // Target position: orbit around voice center
+    const orbSpeed = 0.0003 + (v.current - 30) * 0.00002;
+    p.homeAngle += orbSpeed;
+    const targetX = center.x + Math.cos(p.homeAngle) * p.homeR;
+    const targetY = center.y + Math.sin(p.homeAngle) * p.homeR;
+
+    // Attraction from other voices based on proximity
+    let pullX = 0, pullY = 0;
+    let maxProx = 0;
+    for (let j = 0; j < 3; j++) {
+      if (j === p.voice) continue;
+      const bf = beatFreq(v.current, voices[j].current);
+      const prox = Math.max(0, 1 - bf / 18);
+      if (prox > maxProx) maxProx = prox;
+      if (prox > 0.1) {
+        const otherC = centers[j];
+        const dx = otherC.x - p.x;
+        const dy = otherC.y - p.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        pullX += (dx / d) * prox * 0.3;
+        pullY += (dy / d) * prox * 0.3;
+      }
+    }
+
+    // Centroid pull when converging
+    if (convNorm > 0.4) {
+      const cx = (centers[0].x + centers[1].x + centers[2].x) / 3;
+      const cy = (centers[0].y + centers[1].y + centers[2].y) / 3;
+      const dx = cx - p.x;
+      const dy = cy - p.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      pullX += (dx / d) * convNorm * 0.5;
+      pullY += (dy / d) * convNorm * 0.5;
+    }
+
+    // Spring to target + pull from other voices
+    const spring = 0.015;
+    const damping = 0.92;
+    p.vx = (p.vx + (targetX - p.x) * spring + pullX) * damping;
+    p.vy = (p.vy + (targetY - p.y) * spring + pullY) * damping;
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // Track displacement
+    p.displacement += Math.sqrt(pullX * pullX + pullY * pullY) * 0.001;
+
+    // Color: base voice color, shifting toward gold with proximity
+    const goldMix = Math.min(1, maxProx * 0.8 + convNorm * 0.5);
+    const c = lerpColor(voices[p.voice].color, goldColor, goldMix);
+    const alpha = p.alpha + goldMix * 0.3 + Math.min(p.displacement * 0.05, 0.2);
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size + goldMix * 1.2, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${Math.min(alpha, 0.95)})`;
+    ctx.fill();
+  }
+
+  // Beat frequency visualization: pulsing rings between close pairs
+  for (let i = 0; i < 3; i++) {
+    for (let j = i + 1; j < 3; j++) {
+      const bf = beatFreq(voices[i].current, voices[j].current);
+      if (bf < 8) {
+        const mx = (centers[i].x + centers[j].x) / 2;
+        const my = (centers[i].y + centers[j].y) / 2;
+        const pulsePhase = (t * bf * 0.05) % (Math.PI * 2);
+        const pulseR = 20 + Math.sin(pulsePhase) * 15;
+        const strength = Math.max(0, 1 - bf / 8);
+        const mixC = lerpColor(
+          lerpColor(voices[i].color, voices[j].color, 0.5),
+          goldColor,
+          strength
+        );
+        ctx.beginPath();
+        ctx.arc(mx, my, pulseR, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${mixC[0]|0},${mixC[1]|0},${mixC[2]|0},${strength * 0.3})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+  }
+
+  requestAnimationFrame(draw);
+}
+
+// Initialize particle positions
+for (const p of particles) {
+  const center = getVoiceCenter(p.voice, 0);
+  p.x = center.x + Math.cos(p.homeAngle) * p.homeR;
+  p.y = center.y + Math.sin(p.homeAngle) * p.homeR;
+}
+
+draw();
+</script>
+</body>
+</html>
