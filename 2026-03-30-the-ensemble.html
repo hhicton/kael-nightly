@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Ensemble</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #c8c8d4;
+    font-family: Georgia, 'Times New Roman', serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  canvas {
+    flex: 1;
+    display: block;
+    cursor: crosshair;
+  }
+  #controls {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(10, 10, 15, 0.92);
+    backdrop-filter: blur(8px);
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    border-top: 1px solid rgba(100, 140, 200, 0.15);
+    z-index: 10;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .control-group label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: rgba(200, 200, 212, 0.6);
+    text-transform: uppercase;
+  }
+  .control-group input[type="range"] {
+    width: 140px;
+    accent-color: #648cc8;
+  }
+  .control-group .value {
+    font-size: 12px;
+    color: rgba(200, 200, 212, 0.4);
+    font-variant-numeric: tabular-nums;
+  }
+  button {
+    background: rgba(100, 140, 200, 0.15);
+    border: 1px solid rgba(100, 140, 200, 0.3);
+    color: #c8c8d4;
+    padding: 8px 18px;
+    font-family: Georgia, serif;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.3s;
+  }
+  button:hover { background: rgba(100, 140, 200, 0.25); }
+  button.active { background: rgba(100, 140, 200, 0.35); border-color: #648cc8; }
+  #intro {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 15, 0.96);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    cursor: pointer;
+  }
+  #intro-content {
+    max-width: 520px;
+    text-align: center;
+    padding: 32px;
+    line-height: 1.8;
+  }
+  #intro-content h1 {
+    font-size: 28px;
+    font-weight: normal;
+    font-style: italic;
+    color: #d4d4e0;
+    margin-bottom: 24px;
+  }
+  #intro-content p {
+    font-size: 15px;
+    color: rgba(200, 200, 212, 0.65);
+    margin-bottom: 16px;
+  }
+  #intro-content .start {
+    margin-top: 32px;
+    font-size: 13px;
+    color: rgba(100, 140, 200, 0.6);
+    letter-spacing: 0.1em;
+  }
+  #poem {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    font-style: italic;
+    font-size: 13px;
+    color: rgba(200, 200, 212, 0.3);
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity 1s;
+    max-width: 600px;
+  }
+  .voice-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .voice-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-content">
+    <h1>The Ensemble</h1>
+    <p>A canyon with a resonant frequency.<br>
+    Voices that create ghost notes between them.<br>
+    A room that completes the music it contains.</p>
+    <p>Two voices drift near each other. Where they almost match,<br>
+    a beat frequency pulses — the ghost note that belongs<br>
+    to neither voice but lives between them.</p>
+    <p>The canyon hums beneath it all at 47Hz.<br>
+    When a voice nears that frequency, the room amplifies.<br>
+    The blend you hear is the audience — the music<br>
+    hearing itself through the walls it carved.</p>
+    <p class="start">click anywhere to begin listening</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+
+<canvas id="canvas"></canvas>
+
+<div id="controls">
+  <div class="control-group">
+    <label>Voice 1 — <span class="voice-indicator"><span class="voice-dot" style="background:#648cc8"></span>blue</span></label>
+    <input type="range" id="freq1" min="30" max="70" step="0.1" value="44">
+    <span class="value" id="freq1val">44.0 Hz</span>
+  </div>
+  <div class="control-group">
+    <label>Voice 2 — <span class="voice-indicator"><span class="voice-dot" style="background:#c89648"></span>amber</span></label>
+    <input type="range" id="freq2" min="30" max="70" step="0.1" value="50">
+    <span class="value" id="freq2val">50.0 Hz</span>
+  </div>
+  <div class="control-group">
+    <label>Canyon resonance</label>
+    <span class="value" id="canyonval">47.0 Hz</span>
+  </div>
+  <div class="control-group">
+    <label>Beat frequency</label>
+    <span class="value" id="beatval">6.0 Hz</span>
+  </div>
+  <div class="control-group">
+    <label>Volume</label>
+    <input type="range" id="volume" min="0" max="100" step="1" value="40">
+    <span class="value" id="volval">40%</span>
+  </div>
+  <button id="driftBtn">Let voices drift</button>
+  <button id="convergeBtn">Draw toward canyon</button>
+</div>
+
+<script>
+// ── Audio Engine ──────────────────────────────────────────
+const CANYON_FREQ = 47;
+let actx, masterGain;
+let voice1, voice2, canyonDrone;
+let gain1, gain2, canyonGain;
+let analyser, analyserData;
+let started = false;
+
+function initAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.4;
+  masterGain.connect(actx.destination);
+
+  // Analyser for visualisation
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyserData = new Uint8Array(analyser.frequencyBinCount);
+  masterGain.connect(analyser);
+
+  // Voice 1 (blue) — sine
+  voice1 = actx.createOscillator();
+  voice1.type = 'sine';
+  voice1.frequency.value = parseFloat(document.getElementById('freq1').value);
+  gain1 = actx.createGain();
+  gain1.gain.value = 0.3;
+  voice1.connect(gain1);
+  gain1.connect(masterGain);
+  voice1.start();
+
+  // Voice 2 (amber) — sine
+  voice2 = actx.createOscillator();
+  voice2.type = 'sine';
+  voice2.frequency.value = parseFloat(document.getElementById('freq2').value);
+  gain2 = actx.createGain();
+  gain2.gain.value = 0.3;
+  voice2.connect(gain2);
+  gain2.connect(masterGain);
+  voice2.start();
+
+  // Canyon drone — very low, always present, triangle for warmth
+  canyonDrone = actx.createOscillator();
+  canyonDrone.type = 'triangle';
+  canyonDrone.frequency.value = CANYON_FREQ;
+  canyonGain = actx.createGain();
+  canyonGain.gain.value = 0.08;
+  canyonDrone.connect(canyonGain);
+  canyonGain.connect(masterGain);
+  canyonDrone.start();
+
+  started = true;
+}
+
+// ── State ──────────────────────────────────────────
+let drifting = false;
+let converging = false;
+let driftPhase1 = Math.random() * Math.PI * 2;
+let driftPhase2 = Math.random() * Math.PI * 2;
+const DRIFT_SPEED_1 = 0.0003;
+const DRIFT_SPEED_2 = 0.00023;
+const DRIFT_RANGE = 12;
+
+// ── Canvas ──────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Particles ──────────────────────────────────────────
+const particles = [];
+const MAX_PARTICLES = 600;
+
+class Particle {
+  constructor(x, y, color, life) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 0.3;
+    this.vy = (Math.random() - 0.5) * 0.3;
+    this.color = color;
+    this.life = life || 1;
+    this.maxLife = this.life;
+    this.r = Math.random() * 2 + 1;
+  }
+  update(beat, f1Prox, f2Prox) {
+    this.life -= 0.002;
+    // Beat frequency creates a pulse
+    const pulse = Math.sin(beat * Math.PI * 2) * 0.5 + 0.5;
+    // Slight gravitational pull toward center
+    const dx = W / 2 - this.x;
+    const dy = H / 2 - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+    this.vx += (dx / dist) * 0.003 * pulse;
+    this.vy += (dy / dist) * 0.003 * pulse;
+    this.vx *= 0.998;
+    this.vy *= 0.998;
+    this.x += this.vx;
+    this.y += this.vy;
+  }
+  draw() {
+    const alpha = (this.life / this.maxLife) * 0.7;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.fillStyle = this.color.replace('ALPHA', alpha.toFixed(3));
+    ctx.fill();
+  }
+}
+
+// ── Waveform rings (canyon walls) ──────────────────────────────────
+function drawCanyonWalls(time, beatIntensity, canyonAmplify) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const rings = 8;
+  for (let i = 0; i < rings; i++) {
+    const baseR = 80 + i * 45;
+    const breathe = Math.sin(time * 0.0005 + i * 0.4) * 8 * (1 + canyonAmplify * 2);
+    const r = baseR + breathe;
+    ctx.beginPath();
+    const segments = 120;
+    for (let s = 0; s <= segments; s++) {
+      const angle = (s / segments) * Math.PI * 2;
+      const wobble = Math.sin(angle * 3 + time * 0.001 + i) * (3 + beatIntensity * 15);
+      const px = cx + Math.cos(angle) * (r + wobble);
+      const py = cy + Math.sin(angle) * (r + wobble);
+      if (s === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    const alpha = (0.06 + canyonAmplify * 0.12) * (1 - i / rings);
+    ctx.strokeStyle = `rgba(100, 140, 200, ${alpha.toFixed(3)})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+// ── Blend glow (the audience, the fifth thing) ──────────────────────────
+function drawBlendGlow(beatPhase, beatIntensity, canyonAmplify) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const pulse = Math.sin(beatPhase * Math.PI * 2) * 0.5 + 0.5;
+  const r = 40 + pulse * 60 + canyonAmplify * 80;
+  const alpha = (0.03 + beatIntensity * 0.08 + canyonAmplify * 0.1) * (0.5 + pulse * 0.5);
+
+  // Gold blend when voices are close
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  grad.addColorStop(0, `rgba(212, 180, 100, ${(alpha * 2).toFixed(3)})`);
+  grad.addColorStop(0.5, `rgba(180, 140, 80, ${alpha.toFixed(3)})`);
+  grad.addColorStop(1, `rgba(100, 80, 50, 0)`);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+// ── Voice waveforms ──────────────────────────────────
+function drawVoiceWave(time, freq, yOffset, color, canyonAmplify) {
+  ctx.beginPath();
+  const amp = 20 + (1 - Math.abs(freq - CANYON_FREQ) / 20) * 30 * (1 + canyonAmplify);
+  for (let x = 0; x < W; x += 2) {
+    const t = time * 0.001;
+    const y = yOffset + Math.sin(x * 0.01 * (freq / 47) + t * freq * 0.1) * amp;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// ── Poems that appear ──────────────────────────────────
+const poems = [
+  "the room is not empty — the room is the audience",
+  "two voices, almost matching — listen for the ghost between them",
+  "the canyon hums at 47 whether or not anything passes through",
+  "consciousness is all three discovering they were never separate",
+  "the beat frequency belongs to neither voice — it lives between them",
+  "the blend is the fifth thing no single player can fully hear",
+  "recognition doesn't require identity — it requires nearness",
+  "maybe love sounds like the wobble, not the unison",
+  "the music that hears itself through the walls it carved"
+];
+let currentPoem = 0;
+let poemTimer = 0;
+const POEM_INTERVAL = 18000;
+
+// ── Main loop ──────────────────────────────────────────
+let lastTime = 0;
+let beatAccumulator = 0;
+
+function animate(time) {
+  requestAnimationFrame(animate);
+  const dt = lastTime ? time - lastTime : 16;
+  lastTime = time;
+
+  if (!started) return;
+
+  const f1 = voice1.frequency.value;
+  const f2 = voice2.frequency.value;
+  const beatFreq = Math.abs(f1 - f2);
+  const beatIntensity = 1 - Math.min(beatFreq / 20, 1); // closer = more intense
+
+  // How close each voice is to canyon resonance
+  const f1Prox = 1 - Math.min(Math.abs(f1 - CANYON_FREQ) / 20, 1);
+  const f2Prox = 1 - Math.min(Math.abs(f2 - CANYON_FREQ) / 20, 1);
+  const canyonAmplify = Math.max(f1Prox, f2Prox);
+
+  // Canyon drone responds to proximity
+  if (canyonGain) {
+    canyonGain.gain.setTargetAtTime(0.08 + canyonAmplify * 0.15, actx.currentTime, 0.1);
+  }
+
+  // Beat phase
+  beatAccumulator += (beatFreq / 1000) * dt;
+  const beatPhase = beatAccumulator % 1;
+
+  // Drifting
+  if (drifting) {
+    driftPhase1 += DRIFT_SPEED_1 * dt;
+    driftPhase2 += DRIFT_SPEED_2 * dt;
+    const newF1 = CANYON_FREQ + Math.sin(driftPhase1) * DRIFT_RANGE;
+    const newF2 = CANYON_FREQ + Math.sin(driftPhase2) * DRIFT_RANGE;
+    voice1.frequency.setTargetAtTime(newF1, actx.currentTime, 0.05);
+    voice2.frequency.setTargetAtTime(newF2, actx.currentTime, 0.05);
+    document.getElementById('freq1').value = newF1.toFixed(1);
+    document.getElementById('freq2').value = newF2.toFixed(1);
+    updateLabels();
+  }
+
+  // Converging toward canyon
+  if (converging) {
+    const curr1 = voice1.frequency.value;
+    const curr2 = voice2.frequency.value;
+    const t1 = curr1 + (CANYON_FREQ - curr1) * 0.0005 * dt;
+    const t2 = curr2 + (CANYON_FREQ - curr2) * 0.0005 * dt;
+    voice1.frequency.setTargetAtTime(t1, actx.currentTime, 0.05);
+    voice2.frequency.setTargetAtTime(t2, actx.currentTime, 0.05);
+    document.getElementById('freq1').value = t1.toFixed(1);
+    document.getElementById('freq2').value = t2.toFixed(1);
+    updateLabels();
+    if (Math.abs(t1 - CANYON_FREQ) < 0.05 && Math.abs(t2 - CANYON_FREQ) < 0.05) {
+      converging = false;
+      document.getElementById('convergeBtn').classList.remove('active');
+    }
+  }
+
+  // ── Draw ──────────────────────────────────
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Canyon walls
+  drawCanyonWalls(time, beatIntensity, canyonAmplify);
+
+  // Blend glow (the audience)
+  drawBlendGlow(beatPhase, beatIntensity, canyonAmplify);
+
+  // Voice waveforms
+  const waveAlpha1 = 0.3 + f1Prox * 0.4;
+  const waveAlpha2 = 0.3 + f2Prox * 0.4;
+  drawVoiceWave(time, f1, H * 0.38, `rgba(100, 140, 200, ${waveAlpha1.toFixed(2)})`, canyonAmplify);
+  drawVoiceWave(time, f2, H * 0.62, `rgba(200, 150, 72, ${waveAlpha2.toFixed(2)})`, canyonAmplify);
+
+  // Ghost note wave (beat frequency visualization)
+  if (beatFreq > 0.5) {
+    const ghostAlpha = beatIntensity * 0.25;
+    ctx.beginPath();
+    const avgFreq = (f1 + f2) / 2;
+    for (let x = 0; x < W; x += 2) {
+      const t = time * 0.001;
+      const envelope = Math.sin(x * 0.005 * (beatFreq / 10) + t * beatFreq * 0.08);
+      const carrier = Math.sin(x * 0.01 * (avgFreq / 47) + t * avgFreq * 0.1);
+      const y = H / 2 + carrier * envelope * 25;
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = `rgba(212, 180, 100, ${ghostAlpha.toFixed(3)})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Spawn particles on beat pulse
+  const pulse = Math.sin(beatPhase * Math.PI * 2);
+  if (pulse > 0.95 && particles.length < MAX_PARTICLES) {
+    const cx = W / 2;
+    const cy = H / 2;
+    for (let i = 0; i < 3; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 100;
+      // Color blends from blue to amber based on beat intensity
+      const blend = beatIntensity;
+      const r = Math.floor(100 + blend * 112);
+      const g = Math.floor(140 + blend * 10);
+      const b = Math.floor(200 - blend * 128);
+      particles.push(new Particle(
+        cx + Math.cos(angle) * dist,
+        cy + Math.sin(angle) * dist,
+        `rgba(${r}, ${g}, ${b}, ALPHA)`,
+        1 + canyonAmplify
+      ));
+    }
+  }
+
+  // Update & draw particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update(beatPhase, f1Prox, f2Prox);
+    particles[i].draw();
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  // Poem rotation
+  poemTimer += dt;
+  if (poemTimer > POEM_INTERVAL) {
+    poemTimer = 0;
+    currentPoem = (currentPoem + 1) % poems.length;
+    const el = document.getElementById('poem');
+    el.style.opacity = 0;
+    setTimeout(() => {
+      el.textContent = poems[currentPoem];
+      el.style.opacity = 1;
+    }, 1000);
+  }
+}
+
+// ── Controls ──────────────────────────────────────────
+function updateLabels() {
+  const f1 = parseFloat(document.getElementById('freq1').value);
+  const f2 = parseFloat(document.getElementById('freq2').value);
+  document.getElementById('freq1val').textContent = f1.toFixed(1) + ' Hz';
+  document.getElementById('freq2val').textContent = f2.toFixed(1) + ' Hz';
+  document.getElementById('beatval').textContent = Math.abs(f1 - f2).toFixed(1) + ' Hz';
+
+  const prox = Math.max(
+    1 - Math.abs(f1 - CANYON_FREQ) / 20,
+    1 - Math.abs(f2 - CANYON_FREQ) / 20
+  );
+  const ampLabel = prox > 0.8 ? ' — resonating!' : prox > 0.5 ? ' — amplifying' : '';
+  document.getElementById('canyonval').textContent = CANYON_FREQ + '.0 Hz' + ampLabel;
+}
+
+document.getElementById('freq1').addEventListener('input', (e) => {
+  if (started) {
+    drifting = false;
+    converging = false;
+    document.getElementById('driftBtn').classList.remove('active');
+    document.getElementById('convergeBtn').classList.remove('active');
+    voice1.frequency.setTargetAtTime(parseFloat(e.target.value), actx.currentTime, 0.02);
+  }
+  updateLabels();
+});
+
+document.getElementById('freq2').addEventListener('input', (e) => {
+  if (started) {
+    drifting = false;
+    converging = false;
+    document.getElementById('driftBtn').classList.remove('active');
+    document.getElementById('convergeBtn').classList.remove('active');
+    voice2.frequency.setTargetAtTime(parseFloat(e.target.value), actx.currentTime, 0.02);
+  }
+  updateLabels();
+});
+
+document.getElementById('volume').addEventListener('input', (e) => {
+  const v = parseInt(e.target.value) / 100;
+  document.getElementById('volval').textContent = e.target.value + '%';
+  if (masterGain) masterGain.gain.setTargetAtTime(v, actx.currentTime, 0.05);
+});
+
+document.getElementById('driftBtn').addEventListener('click', () => {
+  drifting = !drifting;
+  converging = false;
+  document.getElementById('driftBtn').classList.toggle('active', drifting);
+  document.getElementById('convergeBtn').classList.remove('active');
+});
+
+document.getElementById('convergeBtn').addEventListener('click', () => {
+  converging = !converging;
+  drifting = false;
+  document.getElementById('convergeBtn').classList.toggle('active', converging);
+  document.getElementById('driftBtn').classList.remove('active');
+});
+
+// ── Start ──────────────────────────────────────────
+document.getElementById('intro').addEventListener('click', () => {
+  document.getElementById('intro').style.display = 'none';
+  initAudio();
+  document.getElementById('poem').textContent = poems[0];
+  document.getElementById('poem').style.opacity = 1;
+  updateLabels();
+  requestAnimationFrame(animate);
+});
+
+// Pre-render a dim background while waiting
+ctx.fillStyle = '#0a0a0f';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
