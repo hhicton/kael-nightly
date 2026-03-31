@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Canyon Memory</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #c8c8d4;
+    font-family: Georgia, 'Times New Roman', serif;
+    overflow: hidden;
+    height: 100vh;
+  }
+  canvas { display: block; cursor: crosshair; }
+  #ui {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(10, 10, 15, 0.92);
+    backdrop-filter: blur(8px);
+    padding: 14px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    border-top: 1px solid rgba(100, 140, 200, 0.15);
+    z-index: 10;
+  }
+  .cg { display: flex; flex-direction: column; gap: 3px; }
+  .cg label { font-size: 10px; letter-spacing: 0.08em; color: rgba(200,200,212,0.55); text-transform: uppercase; }
+  .cg input[type="range"] { width: 120px; accent-color: #648cc8; }
+  .cg .v { font-size: 11px; color: rgba(200,200,212,0.35); font-variant-numeric: tabular-nums; }
+  button {
+    background: rgba(100,140,200,0.15);
+    border: 1px solid rgba(100,140,200,0.3);
+    color: #c8c8d4;
+    padding: 7px 14px;
+    font-family: Georgia, serif;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.3s;
+  }
+  button:hover { background: rgba(100,140,200,0.25); }
+  button.active { background: rgba(100,140,200,0.35); border-color: #648cc8; }
+  button.danger { border-color: rgba(200,100,100,0.4); }
+  button.danger:hover { background: rgba(200,100,100,0.2); }
+  button.danger.active { background: rgba(200,100,100,0.3); border-color: #c86464; }
+  #depth-label {
+    font-size: 11px;
+    color: rgba(200,200,212,0.35);
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+  #intro {
+    position: fixed; inset: 0;
+    background: rgba(10,10,15,0.96);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+  }
+  #intro-inner {
+    max-width: 540px; text-align: center; padding: 32px; line-height: 1.8;
+  }
+  #intro-inner h1 { font-size: 26px; font-weight: normal; font-style: italic; color: #d4d4e0; margin-bottom: 20px; }
+  #intro-inner p { font-size: 14px; color: rgba(200,200,212,0.6); margin-bottom: 14px; }
+  #intro-inner .sm { margin-top: 28px; font-size: 12px; color: rgba(100,140,200,0.5); letter-spacing: 0.1em; }
+  #poem {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(200,200,212,0.25); pointer-events: none; z-index: 5;
+    transition: opacity 1.2s; max-width: 560px;
+  }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-inner">
+    <h1>Canyon Memory</h1>
+    <p>The canyon doesn't just carry sound.<br>It carries the history of every sound that passed through it.</p>
+    <p>Each beat pulse erodes the walls a little deeper.<br>
+    Where voices linger, the canyon carves.<br>
+    Where they converge, sediment layers form — <br>
+    golden strata of past resonance.</p>
+    <p>Silence a voice. Watch the canyon remember.<br>
+    The walls still curve toward where the sound was.<br>
+    The phantom edge persists as bias.</p>
+    <p>The canyon doesn't un-carve.</p>
+    <p class="sm">click to begin</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="cg">
+    <label><span class="dot" style="background:#648cc8"></span>Voice 1</label>
+    <input type="range" id="f1" min="30" max="70" step="0.1" value="44">
+    <span class="v" id="f1v">44.0 Hz</span>
+  </div>
+  <div class="cg">
+    <label><span class="dot" style="background:#c89648"></span>Voice 2</label>
+    <input type="range" id="f2" min="30" max="70" step="0.1" value="50">
+    <span class="v" id="f2v">50.0 Hz</span>
+  </div>
+  <div class="cg">
+    <label>Canyon</label>
+    <span class="v" id="cv">47.0 Hz</span>
+  </div>
+  <div class="cg">
+    <label>Beat</label>
+    <span class="v" id="bv">6.0 Hz</span>
+  </div>
+  <div class="cg">
+    <label>Volume</label>
+    <input type="range" id="vol" min="0" max="100" step="1" value="35">
+  </div>
+  <button id="driftBtn">Drift</button>
+  <button id="convergeBtn">Converge</button>
+  <button id="silenceBtn" class="danger">Silence voice 1</button>
+  <span id="depth-label">depth: 0</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// CANYON MEMORY — The Ensemble that Remembers
+// ═══════════════════════════════════════════════════════
+
+const CANYON_FREQ = 47;
+const GRID = 64;            // erosion grid resolution
+const RING_COUNT = 10;
+const RING_PTS = 180;
+
+// ── Erosion Grid ──────────────────────────────────────
+// Each cell stores cumulative erosion depth + color tint
+const erosion = new Float32Array(GRID * GRID);      // depth
+const erosionR = new Float32Array(GRID * GRID);     // color r accumulator
+const erosionG = new Float32Array(GRID * GRID);     // color g accumulator  
+const erosionB = new Float32Array(GRID * GRID);     // color b accumulator
+let totalDepth = 0;
+let maxDepth = 0;
+
+// ── Sediment Layers ──────────────────────────────────
+// Record moments of deep resonance as permanent strata
+const sedimentLayers = [];  // { angle, radius, intensity, color, time }
+const MAX_SEDIMENT = 200;
+
+// ── Audio ──────────────────────────────────────────
+let actx, masterGain, voice1, voice2, canyonDrone;
+let gain1, gain2, canyonGain;
+let started = false;
+let voice1Silent = false;
+
+function initAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.35;
+  masterGain.connect(actx.destination);
+
+  voice1 = actx.createOscillator(); voice1.type = 'sine';
+  voice1.frequency.value = parseFloat(el('f1').value);
+  gain1 = actx.createGain(); gain1.gain.value = 0.28;
+  voice1.connect(gain1); gain1.connect(masterGain); voice1.start();
+
+  voice2 = actx.createOscillator(); voice2.type = 'sine';
+  voice2.frequency.value = parseFloat(el('f2').value);
+  gain2 = actx.createGain(); gain2.gain.value = 0.28;
+  voice2.connect(gain2); gain2.connect(masterGain); voice2.start();
+
+  canyonDrone = actx.createOscillator(); canyonDrone.type = 'triangle';
+  canyonDrone.frequency.value = CANYON_FREQ;
+  canyonGain = actx.createGain(); canyonGain.gain.value = 0.07;
+  canyonDrone.connect(canyonGain); canyonGain.connect(masterGain); canyonDrone.start();
+
+  started = true;
+}
+
+// ── Canvas ──────────────────────────────────────────
+const canvas = el('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
+
+// ── State ──────────────────────────────────────────
+let drifting = false, converging = false;
+let driftPh1 = Math.random() * Math.PI * 2;
+let driftPh2 = Math.random() * Math.PI * 2;
+let beatAcc = 0, lastTime = 0;
+let poemIdx = 0, poemTimer = 0;
+
+const poems = [
+  "the canyon doesn't un-carve",
+  "every beat pulse leaves a mark the silence can't erase",
+  "the walls still curve toward where the sound was",
+  "displacement is memory in a different language",
+  "silence a voice — watch the canyon remember",
+  "depth is not damage — depth is capacity",
+  "what was carved by grief becomes what opens to love",
+  "the phantom edge persists as bias",
+  "water passes through and is gone — the canyon remains",
+  "shape IS memory, just in a different form"
+];
+
+// ── Helpers ──────────────────────────────────────────
+function el(id) { return document.getElementById(id); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// Map world position to grid cell
+function worldToGrid(x, y) {
+  const gx = Math.floor((x / W) * GRID);
+  const gy = Math.floor((y / H) * GRID);
+  return [clamp(gx, 0, GRID - 1), clamp(gy, 0, GRID - 1)];
+}
+
+// Sample erosion at world position (bilinear)
+function sampleErosion(x, y) {
+  const gx = (x / W) * GRID - 0.5;
+  const gy = (y / H) * GRID - 0.5;
+  const x0 = clamp(Math.floor(gx), 0, GRID - 2);
+  const y0 = clamp(Math.floor(gy), 0, GRID - 2);
+  const fx = gx - x0;
+  const fy = gy - y0;
+  const i00 = y0 * GRID + x0;
+  const i10 = y0 * GRID + x0 + 1;
+  const i01 = (y0 + 1) * GRID + x0;
+  const i11 = (y0 + 1) * GRID + x0 + 1;
+  return lerp(
+    lerp(erosion[i00], erosion[i10], fx),
+    lerp(erosion[i01], erosion[i11], fx),
+    fy
+  );
+}
+
+// Erode at a world position with color
+function erodeAt(wx, wy, amount, r, g, b) {
+  const [gx, gy] = worldToGrid(wx, wy);
+  const radius = 2; // affect nearby cells too
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const cx = gx + dx;
+      const cy = gy + dy;
+      if (cx < 0 || cx >= GRID || cy < 0 || cy >= GRID) continue;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const falloff = Math.max(0, 1 - dist / (radius + 0.5));
+      const idx = cy * GRID + cx;
+      const amt = amount * falloff;
+      erosion[idx] += amt;
+      erosionR[idx] += r * amt;
+      erosionG[idx] += g * amt;
+      erosionB[idx] += b * amt;
+      totalDepth += amt;
+      if (erosion[idx] > maxDepth) maxDepth = erosion[idx];
+    }
+  }
+}
+
+// ── Drawing ──────────────────────────────────────────
+
+function drawErosionField() {
+  if (maxDepth < 0.01) return;
+  // Draw erosion as subtle colored glow on the background
+  const cellW = W / GRID;
+  const cellH = H / GRID;
+  for (let gy = 0; gy < GRID; gy++) {
+    for (let gx = 0; gx < GRID; gx++) {
+      const idx = gy * GRID + gx;
+      const d = erosion[idx];
+      if (d < 0.05) continue;
+      const norm = Math.min(d / (maxDepth * 0.6 + 1), 1);
+      const alpha = norm * 0.12;
+      // Color from accumulated tint
+      const r = clamp(Math.floor(erosionR[idx] / d), 40, 255);
+      const g = clamp(Math.floor(erosionG[idx] / d), 40, 255);
+      const b = clamp(Math.floor(erosionB[idx] / d), 40, 255);
+      ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+      ctx.fillRect(gx * cellW - 1, gy * cellH - 1, cellW + 2, cellH + 2);
+    }
+  }
+}
+
+function drawSediment(time) {
+  for (let i = 0; i < sedimentLayers.length; i++) {
+    const s = sedimentLayers[i];
+    const age = (time - s.time) * 0.001;
+    const fade = Math.max(0, 1 - age / 120); // fade over 2 minutes
+    if (fade <= 0) continue;
+    const alpha = s.intensity * fade * 0.15;
+    ctx.beginPath();
+    ctx.arc(
+      W / 2 + Math.cos(s.angle) * s.radius,
+      H / 2 + Math.sin(s.angle) * s.radius,
+      2 + s.intensity * 3,
+      0, Math.PI * 2
+    );
+    ctx.fillStyle = s.color.replace('ALPHA', alpha.toFixed(3));
+    ctx.fill();
+  }
+}
+
+function drawCanyonWalls(time, beatIntensity, canyonAmplify) {
+  const cx = W / 2;
+  const cy = H / 2;
+  for (let i = 0; i < RING_COUNT; i++) {
+    const baseR = 60 + i * 40;
+    const breathe = Math.sin(time * 0.0005 + i * 0.4) * 6 * (1 + canyonAmplify * 2);
+    ctx.beginPath();
+    for (let s = 0; s <= RING_PTS; s++) {
+      const angle = (s / RING_PTS) * Math.PI * 2;
+      const r = baseR + breathe;
+      // Beat wobble
+      const wobble = Math.sin(angle * 3 + time * 0.001 + i) * (2 + beatIntensity * 12);
+      // EROSION DISPLACEMENT: sample erosion at this wall position and push outward
+      const wx = cx + Math.cos(angle) * (r + wobble);
+      const wy = cy + Math.sin(angle) * (r + wobble);
+      const erodeDisp = sampleErosion(wx, wy) * 8; // erosion pushes walls outward
+      const finalR = r + wobble + erodeDisp;
+      const px = cx + Math.cos(angle) * finalR;
+      const py = cy + Math.sin(angle) * finalR;
+      if (s === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    // Walls get brighter where eroded
+    const ringCx = cx;
+    const ringCy = cy;
+    const avgErosion = sampleErosion(ringCx + baseR * 0.7, ringCy) * 0.3;
+    const alpha = (0.05 + canyonAmplify * 0.1 + Math.min(avgErosion * 0.02, 0.08)) * (1 - i / RING_COUNT);
+    ctx.strokeStyle = `rgba(100, 140, 200, ${alpha.toFixed(3)})`;
+    ctx.lineWidth = 1 + Math.min(avgErosion * 0.1, 1.5);
+    ctx.stroke();
+  }
+}
+
+function drawBlendGlow(beatPhase, beatIntensity, canyonAmplify) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const pulse = Math.sin(beatPhase * Math.PI * 2) * 0.5 + 0.5;
+  const depthBonus = Math.min(totalDepth * 0.0001, 0.15); // deeper canyon = warmer glow
+  const r = 40 + pulse * 60 + canyonAmplify * 80 + totalDepth * 0.02;
+  const alpha = (0.03 + beatIntensity * 0.08 + canyonAmplify * 0.1 + depthBonus) * (0.5 + pulse * 0.5);
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  grad.addColorStop(0, `rgba(212, 180, 100, ${(alpha * 2).toFixed(3)})`);
+  grad.addColorStop(0.5, `rgba(180, 140, 80, ${alpha.toFixed(3)})`);
+  grad.addColorStop(1, 'rgba(100, 80, 50, 0)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+function drawVoiceWave(time, freq, yOffset, color, canyonAmplify, silent) {
+  if (silent) {
+    // Ghost wave — the phantom edge
+    ctx.beginPath();
+    ctx.setLineDash([4, 8]);
+    const amp = 8;
+    for (let x = 0; x < W; x += 3) {
+      const t = time * 0.001;
+      const y = yOffset + Math.sin(x * 0.01 * (freq / 47) + t * freq * 0.05) * amp;
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color.replace(/[\d.]+\)$/, '0.08)');
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return;
+  }
+  ctx.beginPath();
+  const amp = 20 + (1 - Math.abs(freq - CANYON_FREQ) / 20) * 30 * (1 + canyonAmplify);
+  for (let x = 0; x < W; x += 2) {
+    const t = time * 0.001;
+    const y = yOffset + Math.sin(x * 0.01 * (freq / 47) + t * freq * 0.1) * amp;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawGhostWave(time, beatFreq, avgFreq, beatIntensity) {
+  if (beatFreq < 0.5) return;
+  const alpha = beatIntensity * 0.22;
+  ctx.beginPath();
+  for (let x = 0; x < W; x += 2) {
+    const t = time * 0.001;
+    const envelope = Math.sin(x * 0.005 * (beatFreq / 10) + t * beatFreq * 0.08);
+    const carrier = Math.sin(x * 0.01 * (avgFreq / 47) + t * avgFreq * 0.1);
+    const y = H / 2 + carrier * envelope * 25;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = `rgba(212, 180, 100, ${alpha.toFixed(3)})`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// ── Particles (now with displacement memory) ──────────────────
+const particles = [];
+const MAX_P = 500;
+
+class Particle {
+  constructor(x, y, r, g, b, life) {
+    this.x = x; this.y = y;
+    this.vx = (Math.random() - 0.5) * 0.4;
+    this.vy = (Math.random() - 0.5) * 0.4;
+    this.r = r; this.g = g; this.b = b;
+    this.life = life; this.maxLife = life;
+    this.size = Math.random() * 2 + 1;
+    this.displaced = false; // permanently displaced by erosion
+  }
+  update(beatPhase) {
+    this.life -= 0.0018;
+    const pulse = Math.sin(beatPhase * Math.PI * 2) * 0.5 + 0.5;
+    // Erosion-influenced drift
+    const erode = sampleErosion(this.x, this.y);
+    const cx = W / 2, cy = H / 2;
+    const dx = cx - this.x, dy = cy - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+    // Particles drift toward deeper erosion (pulled into carved channels)
+    this.vx += (dx / dist) * (0.002 + erode * 0.001) * pulse;
+    this.vy += (dy / dist) * (0.002 + erode * 0.001) * pulse;
+    // Erosion displaces particles slightly — they carry the mark
+    if (erode > 0.5 && !this.displaced) {
+      this.vx += (Math.random() - 0.5) * erode * 0.02;
+      this.vy += (Math.random() - 0.5) * erode * 0.02;
+      this.displaced = true;
+    }
+    this.vx *= 0.997; this.vy *= 0.997;
+    this.x += this.vx; this.y += this.vy;
+  }
+  draw() {
+    const alpha = (this.life / this.maxLife) * 0.65;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${this.r},${this.g},${this.b},${alpha.toFixed(3)})`;
+    ctx.fill();
+  }
+}
+
+// ── Main Loop ──────────────────────────────────────────
+function animate(time) {
+  requestAnimationFrame(animate);
+  const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
+  lastTime = time;
+  if (!started) return;
+
+  const f1 = voice1.frequency.value;
+  const f2 = voice2.frequency.value;
+  const effectiveF1 = voice1Silent ? f1 : f1; // frequency stays for phantom
+  const beatFreq = voice1Silent ? 0 : Math.abs(f1 - f2);
+  const beatIntensity = 1 - Math.min(beatFreq / 20, 1);
+  const f1Prox = 1 - Math.min(Math.abs(f1 - CANYON_FREQ) / 20, 1);
+  const f2Prox = 1 - Math.min(Math.abs(f2 - CANYON_FREQ) / 20, 1);
+  const canyonAmplify = voice1Silent ? f2Prox : Math.max(f1Prox, f2Prox);
+
+  // Canyon drone responds
+  if (canyonGain) {
+    const canyonVol = 0.07 + canyonAmplify * 0.12 + Math.min(totalDepth * 0.00002, 0.05);
+    canyonGain.gain.setTargetAtTime(canyonVol, actx.currentTime, 0.1);
+  }
+
+  // Beat phase
+  beatAcc += (beatFreq / 1000) * dt;
+  const beatPhase = beatAcc % 1;
+
+  // ── EROSION ──────────────────────────────────
+  // Each beat pulse carves the canyon at voice positions
+  const pulse = Math.sin(beatPhase * Math.PI * 2);
+  if (!voice1Silent && pulse > 0.9) {
+    const cx = W / 2, cy = H / 2;
+    // Erode along voice wave paths
+    for (let i = 0; i < 3; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 60 + Math.random() * (100 + beatIntensity * 80);
+      const wx = cx + Math.cos(angle) * dist;
+      const wy = cy + Math.sin(angle) * dist;
+      // Color based on which voice is dominant at this angle
+      const v1weight = f1Prox;
+      const v2weight = f2Prox;
+      const total = v1weight + v2weight + 0.01;
+      const r = (100 * v1weight + 200 * v2weight) / total;
+      const g = (140 * v1weight + 150 * v2weight) / total;
+      const b = (200 * v1weight + 72 * v2weight) / total;
+      erodeAt(wx, wy, 0.015 * (0.5 + beatIntensity), r, g, b);
+    }
+
+    // Deeper erosion near canyon resonance
+    if (canyonAmplify > 0.7) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 40 + Math.random() * 60;
+      erodeAt(
+        cx + Math.cos(angle) * dist,
+        cy + Math.sin(angle) * dist,
+        0.03 * canyonAmplify,
+        212, 180, 100 // gold for resonance
+      );
+
+      // Record sediment layer at strong resonance
+      if (canyonAmplify > 0.85 && sedimentLayers.length < MAX_SEDIMENT && Math.random() < 0.1) {
+        sedimentLayers.push({
+          angle: Math.random() * Math.PI * 2,
+          radius: 30 + Math.random() * 120,
+          intensity: canyonAmplify,
+          color: `rgba(212, 180, 100, ALPHA)`,
+          time
+        });
+      }
+    }
+  }
+
+  // Drifting
+  if (drifting && !voice1Silent) {
+    driftPh1 += 0.0003 * dt;
+    driftPh2 += 0.00023 * dt;
+    const nf1 = CANYON_FREQ + Math.sin(driftPh1) * 12;
+    const nf2 = CANYON_FREQ + Math.sin(driftPh2) * 12;
+    voice1.frequency.setTargetAtTime(nf1, actx.currentTime, 0.05);
+    voice2.frequency.setTargetAtTime(nf2, actx.currentTime, 0.05);
+    el('f1').value = nf1.toFixed(1);
+    el('f2').value = nf2.toFixed(1);
+    updateLabels();
+  }
+
+  // Converging
+  if (converging) {
+    const c1 = voice1.frequency.value;
+    const c2 = voice2.frequency.value;
+    const t1 = c1 + (CANYON_FREQ - c1) * 0.0005 * dt;
+    const t2 = c2 + (CANYON_FREQ - c2) * 0.0005 * dt;
+    if (!voice1Silent) voice1.frequency.setTargetAtTime(t1, actx.currentTime, 0.05);
+    voice2.frequency.setTargetAtTime(t2, actx.currentTime, 0.05);
+    el('f1').value = t1.toFixed(1);
+    el('f2').value = t2.toFixed(1);
+    updateLabels();
+    if (Math.abs(t1 - CANYON_FREQ) < 0.05 && Math.abs(t2 - CANYON_FREQ) < 0.05) {
+      converging = false;
+      el('convergeBtn').classList.remove('active');
+    }
+  }
+
+  // ── DRAW ──────────────────────────────────
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.12)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Erosion field (the memory, rendered as background glow)
+  drawErosionField();
+
+  // Sediment layers
+  drawSediment(time);
+
+  // Canyon walls (deformed by erosion)
+  drawCanyonWalls(time, voice1Silent ? 0 : beatIntensity, canyonAmplify);
+
+  // Blend glow
+  drawBlendGlow(beatPhase, voice1Silent ? 0 : beatIntensity, canyonAmplify);
+
+  // Voice waveforms
+  const a1 = 0.3 + f1Prox * 0.4;
+  const a2 = 0.3 + f2Prox * 0.4;
+  drawVoiceWave(time, f1, H * 0.38, `rgba(100, 140, 200, ${a1.toFixed(2)})`, canyonAmplify, voice1Silent);
+  drawVoiceWave(time, f2, H * 0.62, `rgba(200, 150, 72, ${a2.toFixed(2)})`, canyonAmplify, false);
+
+  // Ghost note
+  if (!voice1Silent) drawGhostWave(time, beatFreq, (f1 + f2) / 2, beatIntensity);
+
+  // Particles
+  if (!voice1Silent && pulse > 0.93 && particles.length < MAX_P) {
+    const cx = W / 2, cy = H / 2;
+    for (let i = 0; i < 2; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 100;
+      const blend = beatIntensity;
+      particles.push(new Particle(
+        cx + Math.cos(angle) * dist,
+        cy + Math.sin(angle) * dist,
+        Math.floor(100 + blend * 112),
+        Math.floor(140 + blend * 10),
+        Math.floor(200 - blend * 128),
+        1.2 + canyonAmplify * 0.8
+      ));
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update(beatPhase);
+    particles[i].draw();
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  // Depth counter
+  el('depth-label').textContent = `depth: ${Math.floor(totalDepth)}`;
+
+  // Poems
+  poemTimer += dt;
+  if (poemTimer > 16000) {
+    poemTimer = 0;
+    poemIdx = (poemIdx + 1) % poems.length;
+    const p = el('poem');
+    p.style.opacity = 0;
+    setTimeout(() => { p.textContent = poems[poemIdx]; p.style.opacity = 1; }, 1000);
+  }
+}
+
+// ── Controls ──────────────────────────────────────────
+function updateLabels() {
+  const f1 = parseFloat(el('f1').value);
+  const f2 = parseFloat(el('f2').value);
+  el('f1v').textContent = f1.toFixed(1) + ' Hz';
+  el('f2v').textContent = f2.toFixed(1) + ' Hz';
+  el('bv').textContent = (voice1Silent ? 0 : Math.abs(f1 - f2)).toFixed(1) + ' Hz';
+  const prox = Math.max(1 - Math.abs(f1 - CANYON_FREQ) / 20, 1 - Math.abs(f2 - CANYON_FREQ) / 20);
+  const label = prox > 0.8 ? ' — resonating!' : prox > 0.5 ? ' — amplifying' : '';
+  el('cv').textContent = '47.0 Hz' + label;
+}
+
+el('f1').addEventListener('input', e => {
+  if (!started) return;
+  drifting = false; converging = false;
+  el('driftBtn').classList.remove('active');
+  el('convergeBtn').classList.remove('active');
+  voice1.frequency.setTargetAtTime(parseFloat(e.target.value), actx.currentTime, 0.02);
+  updateLabels();
+});
+el('f2').addEventListener('input', e => {
+  if (!started) return;
+  drifting = false; converging = false;
+  el('driftBtn').classList.remove('active');
+  el('convergeBtn').classList.remove('active');
+  voice2.frequency.setTargetAtTime(parseFloat(e.target.value), actx.currentTime, 0.02);
+  updateLabels();
+});
+el('vol').addEventListener('input', e => {
+  if (masterGain) masterGain.gain.setTargetAtTime(parseInt(e.target.value) / 100, actx.currentTime, 0.05);
+});
+
+el('driftBtn').addEventListener('click', () => {
+  drifting = !drifting; converging = false;
+  el('driftBtn').classList.toggle('active', drifting);
+  el('convergeBtn').classList.remove('active');
+});
+el('convergeBtn').addEventListener('click', () => {
+  converging = !converging; drifting = false;
+  el('convergeBtn').classList.toggle('active', converging);
+  el('driftBtn').classList.remove('active');
+});
+
+el('silenceBtn').addEventListener('click', () => {
+  voice1Silent = !voice1Silent;
+  el('silenceBtn').classList.toggle('active', voice1Silent);
+  el('silenceBtn').textContent = voice1Silent ? 'Restore voice 1' : 'Silence voice 1';
+  if (gain1) {
+    gain1.gain.setTargetAtTime(voice1Silent ? 0 : 0.28, actx.currentTime, 0.3);
+  }
+  updateLabels();
+});
+
+// ── Start ──────────────────────────────────────────
+el('intro').addEventListener('click', () => {
+  el('intro').style.display = 'none';
+  initAudio();
+  el('poem').textContent = poems[0];
+  el('poem').style.opacity = 1;
+  updateLabels();
+  requestAnimationFrame(animate);
+});
+
+ctx.fillStyle = '#0a0a0f';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
