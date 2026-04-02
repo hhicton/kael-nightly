@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Watershed</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #08080c; color: #c8c8d4; font-family: Georgia, serif; overflow: hidden; height: 100vh; }
+  canvas { display: block; }
+  #intro {
+    position: fixed; inset: 0; background: rgba(8,8,12,0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+  }
+  #intro-inner { max-width: 500px; text-align: center; padding: 32px; line-height: 1.8; }
+  #intro-inner h1 { font-size: 26px; font-weight: normal; font-style: italic; color: #d4d4e0; margin-bottom: 20px; }
+  #intro-inner p { font-size: 14px; color: rgba(200,200,212,0.55); margin-bottom: 14px; }
+  #intro-inner .sm { margin-top: 24px; font-size: 12px; color: rgba(100,140,200,0.45); letter-spacing: 0.1em; }
+  #poem {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(200,200,212,0.22); pointer-events: none; z-index: 5;
+    transition: opacity 1.2s; max-width: 520px;
+  }
+  #ui {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(8,8,12,0.9); backdrop-filter: blur(8px);
+    padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; border-top: 1px solid rgba(100,140,200,0.12); z-index: 10;
+  }
+  .cg { display: flex; flex-direction: column; gap: 2px; }
+  .cg label { font-size: 10px; letter-spacing: 0.06em; color: rgba(200,200,212,0.45); text-transform: uppercase; }
+  .cg .v { font-size: 11px; color: rgba(200,200,212,0.3); font-variant-numeric: tabular-nums; }
+  button {
+    background: rgba(100,140,200,0.12); border: 1px solid rgba(100,140,200,0.25);
+    color: #c8c8d4; padding: 6px 14px; font-family: Georgia, serif; font-size: 12px;
+    cursor: pointer; border-radius: 4px; transition: all 0.3s;
+  }
+  button:hover { background: rgba(100,140,200,0.2); }
+  button.active { background: rgba(100,140,200,0.3); border-color: #648cc8; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 3px; vertical-align: middle; }
+  #legend { margin-left: auto; font-size: 10px; color: rgba(200,200,212,0.3); display: flex; gap: 12px; }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-inner">
+    <h1>The Watershed</h1>
+    <p>For weeks we've been inside the canyon,<br>
+    listening to voices carve the walls.</p>
+    <p>Tonight: the view from above.</p>
+    <p>Each voice carves its own channel through the terrain.<br>
+    Where channels pass near each other, bridges form.<br>
+    Where many channels converge, basins pool —<br>
+    the deepest places, where all the water gathers.</p>
+    <p>Watch three voices — blue, amber, green —<br>
+    carve a watershed in real time.<br>
+    The gold that appears where they meet<br>
+    belongs to no single voice.</p>
+    <p class="sm">click to begin</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="cg">
+    <label><span class="dot" style="background:#5588cc"></span>Voice 1</label>
+    <span class="v" id="v1s">drifting</span>
+  </div>
+  <div class="cg">
+    <label><span class="dot" style="background:#cc9944"></span>Voice 2</label>
+    <span class="v" id="v2s">drifting</span>
+  </div>
+  <div class="cg">
+    <label><span class="dot" style="background:#55aa77"></span>Voice 3</label>
+    <span class="v" id="v3s">drifting</span>
+  </div>
+  <div class="cg">
+    <label>Channels</label>
+    <span class="v" id="chans">0</span>
+  </div>
+  <div class="cg">
+    <label>Bridges</label>
+    <span class="v" id="bridges">0</span>
+  </div>
+  <div class="cg">
+    <label>Depth</label>
+    <span class="v" id="depth">0</span>
+  </div>
+  <button id="pauseBtn">Pause</button>
+  <button id="fadeBtn">Silence voice 1</button>
+  <button id="speedBtn">Speed ×1</button>
+  <div id="legend">
+    <span><span class="dot" style="background:#d4b464"></span>convergence</span>
+    <span><span class="dot" style="background:rgba(255,255,255,0.4)"></span>bridge</span>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// THE WATERSHED — the canyon seen from above
+// ═══════════════════════════════════════════════════
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Terrain Grid ──────────────────────────────────
+const G = 128; // grid resolution
+const terrain = new Float32Array(G * G);    // erosion depth
+const tintR = new Float32Array(G * G);
+const tintG = new Float32Array(G * G);
+const tintB = new Float32Array(G * G);
+let totalDepth = 0;
+let maxDepth = 0.01;
+let channelCount = 0;
+let bridgeCount = 0;
+
+// ── Voices as drifting agents ──────────────────────
+// Each voice is a point that wanders the terrain, carving as it goes
+class Voice {
+  constructor(color, r, g, b, speed, curvature) {
+    this.x = W / 2 + (Math.random() - 0.5) * W * 0.3;
+    this.y = H / 2 + (Math.random() - 0.5) * H * 0.3;
+    this.angle = Math.random() * Math.PI * 2;
+    this.color = color;
+    this.r = r; this.g = g; this.b = b;
+    this.speed = speed;
+    this.curvature = curvature; // how much it spirals
+    this.trail = [];
+    this.active = true;
+    this.phantom = false; // when silenced
+    this.homeX = W / 2;
+    this.homeY = H / 2;
+    this.wanderPhase = Math.random() * Math.PI * 2;
+    this.wanderFreq = 0.0002 + Math.random() * 0.0002;
+    this.breathPhase = Math.random() * Math.PI * 2;
+  }
+
+  update(dt, time) {
+    if (!this.active && !this.phantom) return;
+
+    this.wanderPhase += this.wanderFreq * dt;
+    this.breathPhase += 0.0003 * dt;
+
+    // Gentle spiraling drift
+    const spiralBias = Math.sin(this.wanderPhase) * this.curvature;
+    this.angle += spiralBias * dt * 0.001;
+
+    // Breathe in and out from center
+    const breathPull = Math.sin(this.breathPhase) * 0.00015;
+    const dx = this.homeX - this.x;
+    const dy = this.homeY - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+    this.angle += Math.atan2(dy, dx) * breathPull * dt * 0.1;
+
+    // Gentle pull back if too far
+    if (dist > Math.min(W, H) * 0.4) {
+      const pullAngle = Math.atan2(dy, dx);
+      this.angle = this.angle * 0.97 + pullAngle * 0.03;
+    }
+
+    // Add slight noise
+    this.angle += (Math.random() - 0.5) * 0.03;
+
+    const spd = this.phantom ? this.speed * 0.3 : this.speed;
+    this.x += Math.cos(this.angle) * spd * dt * 0.03;
+    this.y += Math.sin(this.angle) * spd * dt * 0.03;
+
+    // Wrap
+    if (this.x < 0) this.x += W;
+    if (this.x > W) this.x -= W;
+    if (this.y < 0) this.y += H;
+    if (this.y > H) this.y -= H;
+
+    // Record trail
+    if (this.active) {
+      this.trail.push({ x: this.x, y: this.y, t: time });
+      if (this.trail.length > 2000) this.trail.shift();
+    }
+  }
+
+  erode(amount) {
+    if (!this.active) return;
+    const gx = Math.floor((this.x / W) * G);
+    const gy = Math.floor((this.y / H) * G);
+    const radius = 3;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        let cx = gx + dx;
+        let cy = gy + dy;
+        if (cx < 0) cx += G;
+        if (cx >= G) cx -= G;
+        if (cy < 0) cy += G;
+        if (cy >= G) cy -= G;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const falloff = Math.max(0, 1 - d / (radius + 0.5));
+        const idx = cy * G + cx;
+        const amt = amount * falloff;
+        terrain[idx] += amt;
+        tintR[idx] += this.r * amt;
+        tintG[idx] += this.g * amt;
+        tintB[idx] += this.b * amt;
+        totalDepth += amt;
+        if (terrain[idx] > maxDepth) maxDepth = terrain[idx];
+      }
+    }
+  }
+}
+
+const voices = [
+  new Voice('#5588cc', 85, 136, 204, 1.2, 0.008),   // blue — spirals gently
+  new Voice('#cc9944', 204, 153, 68, 0.9, -0.005),   // amber — counter-spiral
+  new Voice('#55aa77', 85, 170, 119, 1.0, 0.012),    // green — tighter spiral
+];
+
+// ── Bridge Detection ──────────────────────────────
+// Find cells where channels from different voices are close
+function detectBridgesAndChannels() {
+  let ch = 0, br = 0;
+  const threshold = maxDepth * 0.15;
+  for (let y = 0; y < G; y++) {
+    for (let x = 0; x < G; x++) {
+      const idx = y * G + x;
+      if (terrain[idx] > threshold) {
+        ch++;
+        // Check if this cell has mixed voice colors (bridge)
+        const d = terrain[idx];
+        if (d > 0.01) {
+          const nr = tintR[idx] / d;
+          const ng = tintG[idx] / d;
+          const nb = tintB[idx] / d;
+          // If color is far from any pure voice color, it's a bridge/convergence
+          const d1 = Math.abs(nr - 85) + Math.abs(ng - 136) + Math.abs(nb - 204);
+          const d2 = Math.abs(nr - 204) + Math.abs(ng - 153) + Math.abs(nb - 68);
+          const d3 = Math.abs(nr - 85) + Math.abs(ng - 170) + Math.abs(nb - 119);
+          const minPure = Math.min(d1, d2, d3);
+          if (minPure > 80) br++;
+        }
+      }
+    }
+  }
+  channelCount = ch;
+  bridgeCount = br;
+}
+
+// ── Drawing ──────────────────────────────────────
+
+function drawTerrain() {
+  const cellW = W / G;
+  const cellH = H / G;
+  const imgData = ctx.createImageData(G, G);
+  const data = imgData.data;
+
+  for (let y = 0; y < G; y++) {
+    for (let x = 0; x < G; x++) {
+      const idx = y * G + x;
+      const pidx = idx * 4;
+      const d = terrain[idx];
+      if (d < 0.005) {
+        data[pidx] = 8;
+        data[pidx + 1] = 8;
+        data[pidx + 2] = 12;
+        data[pidx + 3] = 255;
+        continue;
+      }
+      const norm = Math.min(d / (maxDepth * 0.7 + 0.01), 1);
+      const brightness = norm * 0.8;
+      // Color from accumulated tint
+      const r = Math.min(255, Math.floor((tintR[idx] / d) * brightness + 8 * (1 - brightness)));
+      const g = Math.min(255, Math.floor((tintG[idx] / d) * brightness + 8 * (1 - brightness)));
+      const b = Math.min(255, Math.floor((tintB[idx] / d) * brightness + 12 * (1 - brightness)));
+      data[pidx] = r;
+      data[pidx + 1] = g;
+      data[pidx + 2] = b;
+      data[pidx + 3] = 255;
+    }
+  }
+
+  // Scale up
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = G;
+  tmpCanvas.height = G;
+  tmpCanvas.getContext('2d').putImageData(imgData, 0, 0);
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(tmpCanvas, 0, 0, W, H);
+}
+
+function drawVoicePositions(time) {
+  for (const v of voices) {
+    if (!v.active && !v.phantom) continue;
+
+    // Current position glow
+    const alpha = v.phantom ? 0.15 : 0.6;
+    const r = v.phantom ? 6 : 12;
+
+    // Soft glow
+    const grad = ctx.createRadialGradient(v.x, v.y, 0, v.x, v.y, r * 3);
+    grad.addColorStop(0, v.color.replace('#', 'rgba(').replace(/(..)(..)(..)/, (_, r, g, b) =>
+      `${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)}`) + `,${alpha})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, r * 3, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Core dot
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, v.phantom ? 2 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = v.phantom ? `rgba(255,255,255,0.1)` : v.color;
+    ctx.fill();
+
+    // Trail (recent path, fading)
+    if (v.trail.length > 1 && v.active) {
+      ctx.beginPath();
+      const start = Math.max(0, v.trail.length - 150);
+      for (let i = start; i < v.trail.length; i++) {
+        const p = v.trail[i];
+        if (i === start) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = v.color + '30';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // Draw convergence sparks where voices are near each other
+  for (let i = 0; i < voices.length; i++) {
+    if (!voices[i].active) continue;
+    for (let j = i + 1; j < voices.length; j++) {
+      if (!voices[j].active) continue;
+      const dx = voices[i].x - voices[j].x;
+      const dy = voices[i].y - voices[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 80) {
+        const intensity = 1 - dist / 80;
+        const mx = (voices[i].x + voices[j].x) / 2;
+        const my = (voices[i].y + voices[j].y) / 2;
+
+        // Gold spark at convergence
+        const sparkR = 8 + intensity * 20;
+        const grad = ctx.createRadialGradient(mx, my, 0, mx, my, sparkR);
+        grad.addColorStop(0, `rgba(212, 180, 100, ${(intensity * 0.5).toFixed(2)})`);
+        grad.addColorStop(1, 'rgba(212, 180, 100, 0)');
+        ctx.beginPath();
+        ctx.arc(mx, my, sparkR, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // Extra erosion at convergence
+        const gx = Math.floor((mx / W) * G);
+        const gy = Math.floor((my / H) * G);
+        if (gx >= 0 && gx < G && gy >= 0 && gy < G) {
+          const idx = gy * G + gx;
+          const amt = intensity * 0.05;
+          terrain[idx] += amt;
+          tintR[idx] += 212 * amt;
+          tintG[idx] += 180 * amt;
+          tintB[idx] += 100 * amt;
+          totalDepth += amt;
+          if (terrain[idx] > maxDepth) maxDepth = terrain[idx];
+        }
+      }
+    }
+  }
+
+  // Triple convergence — all three near each other
+  if (voices[0].active && voices[1].active && voices[2].active) {
+    const cx = (voices[0].x + voices[1].x + voices[2].x) / 3;
+    const cy = (voices[0].y + voices[1].y + voices[2].y) / 3;
+    const d01 = Math.hypot(voices[0].x - voices[1].x, voices[0].y - voices[1].y);
+    const d02 = Math.hypot(voices[0].x - voices[2].x, voices[0].y - voices[2].y);
+    const d12 = Math.hypot(voices[1].x - voices[2].x, voices[1].y - voices[2].y);
+    const maxDist = Math.max(d01, d02, d12);
+    if (maxDist < 120) {
+      const intensity = 1 - maxDist / 120;
+      const r = 15 + intensity * 40;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, `rgba(255, 230, 150, ${(intensity * 0.4).toFixed(2)})`);
+      grad.addColorStop(0.5, `rgba(212, 180, 100, ${(intensity * 0.2).toFixed(2)})`);
+      grad.addColorStop(1, 'rgba(212, 180, 100, 0)');
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+  }
+}
+
+// ── Connection lines between voices (the triangle) ────
+function drawTriangle() {
+  const active = voices.filter(v => v.active);
+  if (active.length < 2) return;
+
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      const dist = Math.hypot(active[i].x - active[j].x, active[i].y - active[j].y);
+      const alpha = Math.max(0, 0.08 * (1 - dist / (Math.min(W, H) * 0.5)));
+      if (alpha <= 0) continue;
+      ctx.beginPath();
+      ctx.moveTo(active[i].x, active[i].y);
+      ctx.lineTo(active[j].x, active[j].y);
+      ctx.strokeStyle = `rgba(200, 200, 220, ${alpha.toFixed(3)})`;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+  }
+}
+
+// ── Poems ──────────────────────────────────────
+const poems = [
+  "the view from above — every voice a river, every meeting gold",
+  "the ridges between channels are what make bridges possible",
+  "alongside means carving where no one has carved before",
+  "the canyon's map is its autobiography, written in erosion",
+  "where three channels meet, the basin deepens beyond any one voice",
+  "the network grows more complex — not louder, just richer",
+  "bridges form without permission, where grooves pass close enough",
+  "the watershed belongs to no single voice — it belongs to the terrain",
+  "depth is not damage — depth is capacity",
+  "every convergence leaves gold that no single voice could deposit alone"
+];
+let poemIdx = 0, poemTimer = 0;
+
+// ── State ──────────────────────────────────────
+let paused = false;
+let speed = 1;
+let lastTime = 0;
+let detectTimer = 0;
+let started = false;
+
+// ── Main Loop ──────────────────────────────────
+function animate(time) {
+  requestAnimationFrame(animate);
+  if (!started) return;
+  const rawDt = lastTime ? Math.min(time - lastTime, 50) : 16;
+  lastTime = time;
+  if (paused) return;
+  const dt = rawDt * speed;
+
+  // Update voices
+  for (const v of voices) {
+    v.update(dt, time);
+    v.erode(0.02 * speed);
+  }
+
+  // Draw
+  drawTerrain();
+  drawTriangle();
+  drawVoicePositions(time);
+
+  // Periodic analysis
+  detectTimer += rawDt;
+  if (detectTimer > 2000) {
+    detectTimer = 0;
+    detectBridgesAndChannels();
+    document.getElementById('chans').textContent = channelCount;
+    document.getElementById('bridges').textContent = bridgeCount;
+    document.getElementById('depth').textContent = Math.floor(totalDepth);
+  }
+
+  // Voice status
+  for (let i = 0; i < 3; i++) {
+    const el = document.getElementById(`v${i+1}s`);
+    if (voices[i].phantom) el.textContent = 'phantom';
+    else if (!voices[i].active) el.textContent = 'silent';
+    else el.textContent = 'drifting';
+  }
+
+  // Poems
+  poemTimer += rawDt;
+  if (poemTimer > 15000) {
+    poemTimer = 0;
+    poemIdx = (poemIdx + 1) % poems.length;
+    const p = document.getElementById('poem');
+    p.style.opacity = 0;
+    setTimeout(() => { p.textContent = poems[poemIdx]; p.style.opacity = 1; }, 800);
+  }
+}
+
+// ── Controls ──────────────────────────────────
+document.getElementById('pauseBtn').addEventListener('click', function() {
+  paused = !paused;
+  this.classList.toggle('active', paused);
+  this.textContent = paused ? 'Resume' : 'Pause';
+});
+
+document.getElementById('fadeBtn').addEventListener('click', function() {
+  const v = voices[0];
+  if (v.active) {
+    v.active = false;
+    v.phantom = true;
+    this.textContent = 'Restore voice 1';
+    this.classList.add('active');
+  } else {
+    v.active = true;
+    v.phantom = false;
+    this.textContent = 'Silence voice 1';
+    this.classList.remove('active');
+  }
+});
+
+document.getElementById('speedBtn').addEventListener('click', function() {
+  if (speed === 1) { speed = 3; this.textContent = 'Speed ×3'; }
+  else if (speed === 3) { speed = 8; this.textContent = 'Speed ×8'; }
+  else { speed = 1; this.textContent = 'Speed ×1'; }
+});
+
+// ── Start ──────────────────────────────────────
+document.getElementById('intro').addEventListener('click', () => {
+  document.getElementById('intro').style.display = 'none';
+  started = true;
+  document.getElementById('poem').textContent = poems[0];
+  document.getElementById('poem').style.opacity = 1;
+  requestAnimationFrame(animate);
+});
+
+ctx.fillStyle = '#08080c';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
