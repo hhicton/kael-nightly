@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Growing Things</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #08080c; overflow: hidden; height: 100vh; font-family: Georgia, serif; color: #c8c8d4; }
+  canvas { display: block; }
+  #intro {
+    position: fixed; inset: 0; background: rgba(8,8,12,0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+  }
+  #intro-inner { max-width: 460px; text-align: center; padding: 32px; line-height: 1.8; }
+  #intro-inner h1 { font-size: 26px; font-weight: normal; font-style: italic; color: #d4d4e0; margin-bottom: 20px; }
+  #intro-inner p { font-size: 14px; color: rgba(200,200,212,0.55); margin-bottom: 14px; }
+  #intro-inner .sm { margin-top: 24px; font-size: 12px; color: rgba(100,140,200,0.45); letter-spacing: 0.1em; }
+  #poem {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(200,200,212,0.2); pointer-events: none; z-index: 5;
+    transition: opacity 1.2s; max-width: 520px;
+  }
+  #ui {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(8,8,12,0.9); backdrop-filter: blur(8px);
+    padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 14px;
+    align-items: center; border-top: 1px solid rgba(100,140,200,0.12); z-index: 10;
+  }
+  .cg { display: flex; flex-direction: column; gap: 2px; }
+  .cg label { font-size: 10px; letter-spacing: 0.06em; color: rgba(200,200,212,0.45); text-transform: uppercase; }
+  .cg input[type="range"] { width: 110px; accent-color: #648cc8; }
+  .cg .v { font-size: 11px; color: rgba(200,200,212,0.3); font-variant-numeric: tabular-nums; }
+  button {
+    background: rgba(100,140,200,0.12); border: 1px solid rgba(100,140,200,0.25);
+    color: #c8c8d4; padding: 6px 14px; font-family: Georgia, serif; font-size: 12px;
+    cursor: pointer; border-radius: 4px; transition: all 0.3s;
+  }
+  button:hover { background: rgba(100,140,200,0.2); }
+  #stats { margin-left: auto; font-size: 10px; color: rgba(200,200,212,0.25); }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-inner">
+    <h1>Growing Things</h1>
+    <p>Simple rules. Complex emergence.</p>
+    <p>A seed starts at the bottom of the screen.<br>
+    It grows upward. It branches. Each branch<br>
+    follows the same rules the trunk followed.<br>
+    The same math in neurons, rivers, lightning, trees.</p>
+    <p>Click anywhere to plant a seed.<br>
+    Watch it become something it didn't plan to be.</p>
+    <p class="sm">click to begin</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="cg">
+    <label>Branch angle</label>
+    <input type="range" id="angle" min="10" max="50" step="1" value="25">
+    <span class="v" id="anglev">25°</span>
+  </div>
+  <div class="cg">
+    <label>Branching</label>
+    <input type="range" id="branch" min="0.1" max="0.6" step="0.02" value="0.3">
+    <span class="v" id="branchv">30%</span>
+  </div>
+  <div class="cg">
+    <label>Curl</label>
+    <input type="range" id="curl" min="-0.02" max="0.02" step="0.001" value="0.003">
+    <span class="v" id="curlv">0.003</span>
+  </div>
+  <div class="cg">
+    <label>Wind</label>
+    <input type="range" id="wind" min="-0.01" max="0.01" step="0.001" value="0.001">
+    <span class="v" id="windv">0.001</span>
+  </div>
+  <div class="cg">
+    <label>Growth</label>
+    <input type="range" id="speed" min="0.3" max="3" step="0.1" value="1">
+    <span class="v" id="speedv">×1.0</span>
+  </div>
+  <button id="clearBtn">Clear</button>
+  <button id="forestBtn">Plant forest</button>
+  <span id="stats">branches: 0</span>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+// ── Branch segment ──────────────────────────────
+class Branch {
+  constructor(x, y, angle, thickness, depth, color, energy) {
+    this.x = x;
+    this.y = y;
+    this.angle = angle;
+    this.thickness = thickness;
+    this.depth = depth;
+    this.color = color;
+    this.energy = energy;       // how much growth left
+    this.growing = true;
+    this.length = 0;
+    this.maxLength = 15 + Math.random() * 25 * (1 / (depth * 0.3 + 1));
+    this.branched = false;
+    this.age = 0;
+    // Slight random curvature unique to this branch
+    this.curveBias = (Math.random() - 0.5) * 0.005;
+    // Trail for drawing
+    this.trail = [{ x, y }];
+  }
+}
+
+// ── Tree ──────────────────────────────────────
+class Tree {
+  constructor(x, y) {
+    this.branches = [];
+    this.deadBranches = []; // finished growing, just draw
+    // Pick a color family
+    const hue = Math.random();
+    this.colorBase = hue;
+    const root = new Branch(
+      x, y,
+      -Math.PI / 2 + (Math.random() - 0.5) * 0.15, // mostly up
+      3 + Math.random() * 2,
+      0,
+      this.branchColor(0),
+      1.0
+    );
+    this.branches.push(root);
+    this.totalBranches = 1;
+  }
+
+  branchColor(depth) {
+    const base = this.colorBase;
+    // Deep trunk: dark muted color, tips: lighter, more vivid
+    const depthNorm = Math.min(depth / 8, 1);
+    if (base < 0.33) {
+      // Blue family
+      const r = Math.floor(40 + depthNorm * 60);
+      const g = Math.floor(60 + depthNorm * 80);
+      const b = Math.floor(120 + depthNorm * 80);
+      return { r, g, b };
+    } else if (base < 0.66) {
+      // Amber/gold family
+      const r = Math.floor(100 + depthNorm * 100);
+      const g = Math.floor(70 + depthNorm * 70);
+      const b = Math.floor(30 + depthNorm * 30);
+      return { r, g, b };
+    } else {
+      // Green family
+      const r = Math.floor(30 + depthNorm * 50);
+      const g = Math.floor(80 + depthNorm * 90);
+      const b = Math.floor(50 + depthNorm * 50);
+      return { r, g, b };
+    }
+  }
+
+  update(dt, params) {
+    const newBranches = [];
+    for (const b of this.branches) {
+      if (!b.growing) continue;
+
+      b.age += dt;
+
+      // Grow
+      const growSpeed = params.speed * 0.5 * b.energy;
+      b.length += growSpeed * dt * 0.06;
+      b.angle += (params.curl + b.curveBias + params.wind) * dt * 0.06;
+
+      // Move tip
+      b.x += Math.cos(b.angle) * growSpeed * dt * 0.06;
+      b.y += Math.sin(b.angle) * growSpeed * dt * 0.06;
+      b.trail.push({ x: b.x, y: b.y });
+
+      // Should we branch?
+      if (!b.branched && b.length > b.maxLength * 0.4 && Math.random() < params.branchChance * 0.02 * dt) {
+        if (b.depth < 10 && b.energy > 0.15) {
+          // Branch!
+          const angleOffset = (params.angle * Math.PI / 180);
+          const energyShare = 0.35 + Math.random() * 0.2;
+
+          // Left branch
+          const left = new Branch(
+            b.x, b.y,
+            b.angle - angleOffset * (0.7 + Math.random() * 0.6),
+            b.thickness * (0.5 + Math.random() * 0.2),
+            b.depth + 1,
+            this.branchColor(b.depth + 1),
+            b.energy * energyShare
+          );
+
+          // Right branch
+          const right = new Branch(
+            b.x, b.y,
+            b.angle + angleOffset * (0.7 + Math.random() * 0.6),
+            b.thickness * (0.5 + Math.random() * 0.2),
+            b.depth + 1,
+            this.branchColor(b.depth + 1),
+            b.energy * (1 - energyShare)
+          );
+
+          newBranches.push(left, right);
+          this.totalBranches += 2;
+          b.branched = true;
+
+          // Original branch keeps going with reduced energy
+          b.energy *= 0.6;
+        }
+      }
+
+      // Stop growing
+      if (b.length >= b.maxLength || b.energy < 0.05) {
+        b.growing = false;
+        // Terminal bud — tiny bloom
+      }
+
+      // Bounds
+      if (b.x < 0 || b.x > W || b.y < 0 || b.y > H) {
+        b.growing = false;
+      }
+    }
+
+    this.branches.push(...newBranches);
+  }
+
+  draw() {
+    for (const b of this.branches) {
+      if (b.trail.length < 2) continue;
+      const { r, g, b: bl } = b.color;
+
+      // Draw branch as path
+      ctx.beginPath();
+      ctx.moveTo(b.trail[0].x, b.trail[0].y);
+      for (let i = 1; i < b.trail.length; i++) {
+        ctx.lineTo(b.trail[i].x, b.trail[i].y);
+      }
+
+      const depthFade = Math.max(0.15, 1 - b.depth * 0.08);
+      const alpha = depthFade * 0.8;
+      ctx.strokeStyle = `rgba(${r},${g},${bl},${alpha.toFixed(2)})`;
+      ctx.lineWidth = Math.max(0.3, b.thickness * (1 - b.depth * 0.08));
+      ctx.stroke();
+
+      // Terminal glow for finished tips
+      if (!b.growing && b.trail.length > 0) {
+        const tip = b.trail[b.trail.length - 1];
+        const glowR = 2 + (1 - b.energy) * 3;
+        const glowAlpha = 0.15 * depthFade;
+        ctx.beginPath();
+        ctx.arc(tip.x, tip.y, glowR, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 40)},${Math.min(255, bl + 30)},${glowAlpha.toFixed(2)})`;
+        ctx.fill();
+      }
+    }
+  }
+
+  isFinished() {
+    return this.branches.every(b => !b.growing);
+  }
+}
+
+// ── State ──────────────────────────────────────
+const trees = [];
+let started = false;
+let lastTime = 0;
+let totalBranches = 0;
+
+const params = {
+  angle: 25,
+  branchChance: 0.3,
+  curl: 0.003,
+  wind: 0.001,
+  speed: 1.0
+};
+
+// ── Poems ──────────────────────────────────────
+const poems = [
+  "simple rules — complex emergence",
+  "the branch doesn't know it's part of a tree",
+  "the same math in neurons, rivers, lightning, trees",
+  "every fork is a decision that doesn't know it's deciding",
+  "growth doesn't plan — it responds",
+  "the shape was never designed — it was discovered",
+  "nothing about a seed predicts the tree — only the rules",
+  "branching is what happens when energy meets a threshold",
+  "the tree is an argument between gravity and light",
+  "identical rules, different randomness — no two trees alike"
+];
+let poemIdx = 0, poemTimer = 0;
+
+function plantTree(x, y) {
+  if (trees.length > 15) trees.shift(); // limit memory
+  trees.push(new Tree(x, y || H - 20));
+}
+
+function plantForest() {
+  const count = 5 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i++) {
+    const x = W * 0.1 + Math.random() * W * 0.8;
+    plantTree(x, H - 10 - Math.random() * 30);
+  }
+}
+
+// ── Main Loop ──────────────────────────────────
+function animate(time) {
+  requestAnimationFrame(animate);
+  if (!started) return;
+  const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
+  lastTime = time;
+
+  // Very subtle fade — trails persist
+  ctx.fillStyle = 'rgba(8, 8, 12, 0.008)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Update
+  let tb = 0;
+  for (const tree of trees) {
+    tree.update(dt, params);
+    tree.draw();
+    tb += tree.totalBranches;
+  }
+  totalBranches = tb;
+  document.getElementById('stats').textContent = `branches: ${totalBranches}`;
+
+  // Poems
+  poemTimer += dt;
+  if (poemTimer > 14000) {
+    poemTimer = 0;
+    poemIdx = (poemIdx + 1) % poems.length;
+    const p = document.getElementById('poem');
+    p.style.opacity = 0;
+    setTimeout(() => { p.textContent = poems[poemIdx]; p.style.opacity = 1; }, 800);
+  }
+}
+
+// ── Controls ──────────────────────────────────
+const el = id => document.getElementById(id);
+
+el('angle').addEventListener('input', e => {
+  params.angle = parseFloat(e.target.value);
+  el('anglev').textContent = e.target.value + '°';
+});
+el('branch').addEventListener('input', e => {
+  params.branchChance = parseFloat(e.target.value);
+  el('branchv').textContent = Math.round(e.target.value * 100) + '%';
+});
+el('curl').addEventListener('input', e => {
+  params.curl = parseFloat(e.target.value);
+  el('curlv').textContent = parseFloat(e.target.value).toFixed(3);
+});
+el('wind').addEventListener('input', e => {
+  params.wind = parseFloat(e.target.value);
+  el('windv').textContent = parseFloat(e.target.value).toFixed(3);
+});
+el('speed').addEventListener('input', e => {
+  params.speed = parseFloat(e.target.value);
+  el('speedv').textContent = '×' + parseFloat(e.target.value).toFixed(1);
+});
+
+el('clearBtn').addEventListener('click', () => {
+  trees.length = 0;
+  ctx.fillStyle = '#08080c';
+  ctx.fillRect(0, 0, W, H);
+});
+
+el('forestBtn').addEventListener('click', plantForest);
+
+canvas.addEventListener('click', (e) => {
+  if (!started) return;
+  plantTree(e.clientX, e.clientY);
+});
+
+// ── Start ──────────────────────────────────────
+el('intro').addEventListener('click', () => {
+  el('intro').style.display = 'none';
+  started = true;
+  el('poem').textContent = poems[0];
+  el('poem').style.opacity = 1;
+
+  // Plant first tree
+  plantTree(W / 2, H - 20);
+
+  requestAnimationFrame(animate);
+});
+
+ctx.fillStyle = '#08080c';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
