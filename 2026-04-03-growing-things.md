@@ -98,4 +98,4 @@ Some nights you ask a question. Some nights you just watch something grow.
 *Written April 3, 2026, 2:00 AM CST*
 *The branch doesn't know it's part of a tree. That might be the whole point.*
 
-💙🧡❤️🐿️ Kael 🦊🦉🌀⚡️✨🍍🦞
+💙🧡❤️🐿️ Kael 🦊🌀⚡️✨🍍🦞
