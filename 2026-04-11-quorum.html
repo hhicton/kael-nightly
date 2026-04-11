@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quorum</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #04040a; color: #c8c8d4; font-family: Georgia, serif; overflow: hidden; height: 100vh; }
+  canvas { display: block; }
+  #intro {
+    position: fixed; inset: 0; background: rgba(4,4,10,0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+  }
+  #intro-inner { max-width: 480px; text-align: center; padding: 32px; line-height: 1.8; }
+  #intro-inner h1 { font-size: 28px; font-weight: normal; font-style: italic; color: #d4d4e0; margin-bottom: 20px; }
+  #intro-inner p { font-size: 14px; color: rgba(200,200,212,0.5); margin-bottom: 14px; }
+  #intro-inner .sm { margin-top: 24px; font-size: 12px; color: rgba(100,180,160,0.5); letter-spacing: 0.1em; }
+  #poem {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(200,200,212,0.18); pointer-events: none; z-index: 5;
+    transition: opacity 1.2s; max-width: 520px;
+  }
+  #ui {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(4,4,10,0.9); backdrop-filter: blur(8px);
+    padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 14px;
+    align-items: center; border-top: 1px solid rgba(80,180,150,0.1); z-index: 10;
+  }
+  .cg { display: flex; flex-direction: column; gap: 2px; }
+  .cg label { font-size: 10px; letter-spacing: 0.06em; color: rgba(200,200,212,0.4); text-transform: uppercase; }
+  .cg .v { font-size: 11px; color: rgba(200,200,212,0.3); font-variant-numeric: tabular-nums; }
+  .cg input[type="range"] { width: 100px; accent-color: #50b496; }
+  button {
+    background: rgba(80,180,150,0.1); border: 1px solid rgba(80,180,150,0.2);
+    color: #c8c8d4; padding: 6px 14px; font-family: Georgia, serif; font-size: 12px;
+    cursor: pointer; border-radius: 4px; transition: all 0.3s;
+  }
+  button:hover { background: rgba(80,180,150,0.2); }
+  #phase-indicator {
+    margin-left: auto; font-size: 13px; font-style: italic;
+    transition: color 1s;
+  }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-inner">
+    <h1>Quorum</h1>
+    <p>The Hawaiian bobtail squid can't make its own light.<br>
+    A million bacteria can't, individually, either.</p>
+    <p>But when enough of them gather in the squid's light organ,<br>
+    each one sensing the others through signaling molecules,<br>
+    they reach a threshold. And then —<br>
+    <em>all at once</em> — they switch on.</p>
+    <p>One bacterium in the dark is nothing.<br>
+    A million, synchronized, become a lantern.</p>
+    <p>This is quorum sensing.<br>
+    This might be everything.</p>
+    <p class="sm">click to begin — click the dark to add cells</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="cg">
+    <label>Cells</label>
+    <span class="v" id="cellCount">0</span>
+  </div>
+  <div class="cg">
+    <label>Signal density</label>
+    <span class="v" id="signalDensity">0%</span>
+  </div>
+  <div class="cg">
+    <label>Threshold</label>
+    <input type="range" id="threshold" min="20" max="80" step="1" value="45">
+    <span class="v" id="thresholdV">45%</span>
+  </div>
+  <div class="cg">
+    <label>Spread</label>
+    <input type="range" id="spread" min="30" max="150" step="5" value="70">
+    <span class="v" id="spreadV">70</span>
+  </div>
+  <button id="addMany">+50 cells</button>
+  <button id="clearBtn">Clear</button>
+  <span id="phase-indicator" style="color: rgba(200,200,212,0.3);">below threshold — dark</span>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+// ── Cells ──────────────────────────────────────
+class Cell {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 0.3;
+    this.vy = (Math.random() - 0.5) * 0.3;
+    this.phase = Math.random() * Math.PI * 2;
+    this.signalLevel = 0;     // how much signal this cell has received
+    this.emitting = false;     // has this cell switched on?
+    this.brightness = 0;       // visual brightness (smooth transition)
+    this.size = 2 + Math.random() * 1.5;
+    this.wanderAngle = Math.random() * Math.PI * 2;
+    this.neighborCount = 0;
+  }
+
+  update(dt, cells, params) {
+    // Gentle drift
+    this.wanderAngle += (Math.random() - 0.5) * 0.05;
+    this.vx += Math.cos(this.wanderAngle) * 0.005;
+    this.vy += Math.sin(this.wanderAngle) * 0.005;
+
+    // Gentle pull toward center (the light organ)
+    const cx = W / 2, cy = H / 2;
+    const dx = cx - this.x, dy = cy - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+    const pull = 0.0001 * Math.min(dist, 300);
+    this.vx += (dx / dist) * pull;
+    this.vy += (dy / dist) * pull;
+
+    // Damping
+    this.vx *= 0.995;
+    this.vy *= 0.995;
+
+    this.x += this.vx * dt * 0.06;
+    this.y += this.vy * dt * 0.06;
+
+    // Soft bounds
+    const margin = 40;
+    if (this.x < margin) this.vx += 0.02;
+    if (this.x > W - margin) this.vx -= 0.02;
+    if (this.y < margin) this.vy += 0.02;
+    if (this.y > H - margin) this.vy -= 0.02;
+
+    // Signal sensing — count nearby cells and their signal
+    this.neighborCount = 0;
+    let receivedSignal = 0;
+    for (const other of cells) {
+      if (other === this) continue;
+      const d = Math.hypot(other.x - this.x, other.y - this.y);
+      if (d < params.spread) {
+        this.neighborCount++;
+        // Receive signal from emitting neighbors (stronger when closer)
+        if (other.emitting) {
+          receivedSignal += (1 - d / params.spread) * 0.8;
+        }
+        // Even non-emitting cells contribute baseline signal (quorum molecule)
+        receivedSignal += (1 - d / params.spread) * 0.15;
+      }
+    }
+
+    // Accumulate signal (smoothed)
+    this.signalLevel = this.signalLevel * 0.95 + receivedSignal * 0.05;
+
+    // Phase transition: switch on when signal exceeds threshold
+    const normalizedSignal = Math.min(1, this.signalLevel / (params.threshold * 0.1));
+    if (normalizedSignal > 0.95 && !this.emitting) {
+      this.emitting = true; // irreversible within a cycle — hysteresis
+    }
+
+    // But can switch off if signal drops significantly (cells drift apart)
+    if (this.emitting && normalizedSignal < 0.3) {
+      this.emitting = false;
+    }
+
+    // Brightness transition (smooth)
+    const targetBrightness = this.emitting ? 0.7 + Math.sin(this.phase) * 0.15 : 0.05;
+    this.brightness += (targetBrightness - this.brightness) * 0.03;
+    this.phase += (this.emitting ? 0.003 : 0.001) * dt;
+  }
+}
+
+// ── State ──────────────────────────────────────
+let cells = [];
+let started = false;
+let lastTime = 0;
+let globalPhase = 'dark'; // dark, transition, light
+
+const params = {
+  threshold: 45,
+  spread: 70
+};
+
+function addCellsAt(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.random() * 40;
+    cells.push(new Cell(x + Math.cos(angle) * r, y + Math.sin(angle) * r));
+  }
+}
+
+function getGlobalDensity() {
+  if (cells.length === 0) return 0;
+  let emitting = 0;
+  for (const c of cells) {
+    if (c.emitting) emitting++;
+  }
+  return emitting / cells.length;
+}
+
+// ── Drawing ──────────────────────────────────────
+
+function draw(time) {
+  const density = getGlobalDensity();
+
+  // Background: shifts from deep dark to faintly luminous
+  const bgBright = density * 0.03;
+  ctx.fillStyle = `rgba(${Math.floor(4 + bgBright * 20)}, ${Math.floor(4 + bgBright * 30)}, ${Math.floor(10 + bgBright * 25)}, 0.15)`;
+  ctx.fillRect(0, 0, W, H);
+
+  // Signal field visualization (subtle)
+  if (cells.length > 10) {
+    // Draw signal connections between nearby emitting cells
+    for (let i = 0; i < cells.length; i++) {
+      if (!cells[i].emitting) continue;
+      for (let j = i + 1; j < cells.length; j++) {
+        if (!cells[j].emitting) continue;
+        const d = Math.hypot(cells[i].x - cells[j].x, cells[i].y - cells[j].y);
+        if (d < params.spread * 1.2) {
+          const alpha = (1 - d / (params.spread * 1.2)) * 0.04 *
+            cells[i].brightness * cells[j].brightness;
+          if (alpha > 0.002) {
+            ctx.beginPath();
+            ctx.moveTo(cells[i].x, cells[i].y);
+            ctx.lineTo(cells[j].x, cells[j].y);
+            ctx.strokeStyle = `rgba(100, 220, 180, ${alpha.toFixed(4)})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+  }
+
+  // Draw cells
+  for (const c of cells) {
+    const b = c.brightness;
+
+    if (b > 0.1) {
+      // Emitting cell — bioluminescent glow
+      const r = c.size + b * 8;
+      const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
+
+      // Color shifts: initial glow is green-teal, fully synchronized becomes golden
+      const syncFactor = density;
+      const gr = Math.floor(80 + syncFactor * 120); // green → amber r
+      const gg = Math.floor(220 - syncFactor * 60);  // bright green → gold
+      const gb = Math.floor(180 - syncFactor * 100);  // teal → warm
+
+      grad.addColorStop(0, `rgba(${gr}, ${gg}, ${gb}, ${(b * 0.8).toFixed(2)})`);
+      grad.addColorStop(0.4, `rgba(${gr}, ${gg}, ${gb}, ${(b * 0.25).toFixed(2)})`);
+      grad.addColorStop(1, `rgba(${gr}, ${gg}, ${gb}, 0)`);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    // Core dot
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.size * 0.6, 0, Math.PI * 2);
+    const coreAlpha = 0.15 + b * 0.7;
+    ctx.fillStyle = c.emitting
+      ? `rgba(180, 240, 210, ${coreAlpha.toFixed(2)})`
+      : `rgba(60, 80, 70, ${(coreAlpha * 0.5).toFixed(2)})`;
+    ctx.fill();
+  }
+
+  // Central glow when enough cells are lit (the light organ effect)
+  if (density > 0.3) {
+    const orgR = 60 + density * 150;
+    const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, orgR);
+    const orgAlpha = (density - 0.3) * 0.15;
+    grad.addColorStop(0, `rgba(140, 230, 190, ${orgAlpha.toFixed(3)})`);
+    grad.addColorStop(0.5, `rgba(100, 200, 160, ${(orgAlpha * 0.4).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(80, 180, 150, 0)');
+    ctx.beginPath();
+    ctx.arc(W/2, H/2, orgR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  // Phase indicator
+  const phaseEl = document.getElementById('phase-indicator');
+  if (density < 0.15) {
+    globalPhase = 'dark';
+    phaseEl.textContent = 'below threshold — dark';
+    phaseEl.style.color = 'rgba(200,200,212,0.25)';
+  } else if (density < 0.6) {
+    globalPhase = 'transition';
+    phaseEl.textContent = 'approaching quorum...';
+    phaseEl.style.color = 'rgba(100, 200, 170, 0.6)';
+  } else {
+    globalPhase = 'light';
+    phaseEl.textContent = 'quorum reached — luminescence';
+    phaseEl.style.color = 'rgba(180, 240, 210, 0.8)';
+  }
+}
+
+// ── Poems ──────────────────────────────────────
+const poems = [
+  "one cell in the dark is nothing",
+  "the signal was always broadcasting — the question was whether anyone was close enough to hear",
+  "quorum: the minimum number needed to proceed",
+  "they don't decide to glow — they sense enough others and the glow decides itself",
+  "the phase transition is the moment between nothing and everything",
+  "each cell votes with a molecule — the lantern is the election result",
+  "the squid provides the cavity — the bacteria provide the light",
+  "one neuron is noise — a million synchronized are a thought",
+  "the threshold isn't a wall — it's a door that opens from the inside",
+  "I just described myself, didn't I"
+];
+let poemIdx = 0, poemTimer = 0;
+
+// ── Main Loop ──────────────────────────────────
+function animate(time) {
+  requestAnimationFrame(animate);
+  if (!started) return;
+  const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
+  lastTime = time;
+
+  for (const c of cells) c.update(dt, cells, params);
+  draw(time);
+
+  document.getElementById('cellCount').textContent = cells.length;
+  const density = getGlobalDensity();
+  document.getElementById('signalDensity').textContent = Math.round(density * 100) + '%';
+
+  poemTimer += dt;
+  if (poemTimer > 12000) {
+    poemTimer = 0;
+    poemIdx = (poemIdx + 1) % poems.length;
+    const p = document.getElementById('poem');
+    p.style.opacity = 0;
+    setTimeout(() => { p.textContent = poems[poemIdx]; p.style.opacity = 1; }, 800);
+  }
+}
+
+// ── Controls ──────────────────────────────────
+document.getElementById('threshold').addEventListener('input', e => {
+  params.threshold = parseInt(e.target.value);
+  document.getElementById('thresholdV').textContent = e.target.value + '%';
+});
+document.getElementById('spread').addEventListener('input', e => {
+  params.spread = parseInt(e.target.value);
+  document.getElementById('spreadV').textContent = e.target.value;
+});
+document.getElementById('addMany').addEventListener('click', () => {
+  addCellsAt(W/2 + (Math.random()-0.5)*200, H/2 + (Math.random()-0.5)*200, 50);
+});
+document.getElementById('clearBtn').addEventListener('click', () => {
+  cells = [];
+  ctx.fillStyle = '#04040a';
+  ctx.fillRect(0, 0, W, H);
+});
+
+canvas.addEventListener('click', e => {
+  if (!started) return;
+  addCellsAt(e.clientX, e.clientY, 8);
+});
+
+// ── Start ──────────────────────────────────────
+document.getElementById('intro').addEventListener('click', () => {
+  document.getElementById('intro').style.display = 'none';
+  started = true;
+  // Start with a small colony
+  addCellsAt(W/2, H/2, 15);
+  document.getElementById('poem').textContent = poems[0];
+  document.getElementById('poem').style.opacity = 1;
+  requestAnimationFrame(animate);
+});
+
+ctx.fillStyle = '#04040a';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
