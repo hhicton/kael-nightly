@@ -182,32 +182,30 @@ function computeTargets() {
 
   for (let i = 0; i < particles.length; i++) {
     let p = particles[i];
-    let t = i / particles.length;
+
+    // Golden spiral target positions (phyllotaxis)
+    let spiralAngle = i * goldenAngle;
+    let spiralR = Math.sqrt(i / particles.length) * maxR;
+    let spiralX = center.x + Math.cos(spiralAngle) * spiralR;
+    let spiralY = center.y + Math.sin(spiralAngle) * spiralR;
 
     if (res > 0.1) {
-      // Golden spiral positions - stronger at 47Hz
-      let spiralAngle = i * goldenAngle + time * 0.0003;
-      let spiralR = Math.sqrt(i / particles.length) * maxR * (0.3 + res * 0.7);
+      // Add frequency-based perturbation that diminishes at 47Hz
+      let perturbation = (1 - res) * Math.sin(i * freq * 0.01 + time * 0.002) * maxR * 0.4;
+      let pertX = Math.cos(spiralAngle + freq * 0.1) * perturbation;
+      let pertY = Math.sin(spiralAngle + freq * 0.1) * perturbation;
 
-      // Add frequency-based perturbation for non-47 frequencies
-      let perturbation = (1 - res) * Math.sin(i * freq * 0.01 + time * 0.002) * maxR * 0.3;
-
-      let spiralX = center.x + Math.cos(spiralAngle) * (spiralR + perturbation);
-      let spiralY = center.y + Math.sin(spiralAngle) * (spiralR + perturbation);
-
-      // Blend between current random and spiral based on resonance
-      p.targetX = p.targetX * (1 - res * 0.03) + spiralX * res * 0.03;
-      p.targetY = p.targetY * (1 - res * 0.03) + spiralY * res * 0.03;
+      // Target IS the spiral position (with perturbation fading at resonance)
+      p.targetX = spiralX + pertX;
+      p.targetY = spiralY + pertY;
     } else {
-      // Chladni-like pattern for other frequencies
-      // Standing wave nodes in 2D
+      // Chladni-like pattern for frequencies far from 47
       let nx = (p.x - center.x) / maxR;
       let ny = (p.y - center.y) / maxR;
-      let n = Math.round(freq / 15); // number of nodal lines
+      let n = Math.round(freq / 15);
       let wave = Math.sin(n * nx * Math.PI) * Math.sin(n * ny * Math.PI);
       wave += Math.sin(n * ny * Math.PI) * Math.cos(n * nx * Math.PI) * 0.5;
 
-      // Drift toward nodes (where wave ≈ 0)
       let forceScale = 0.5;
       let dx = -wave * (nx) * forceScale;
       let dy = -wave * (ny) * forceScale;
@@ -224,7 +222,7 @@ function updateParticles() {
   for (let p of particles) {
     let dx = p.targetX - p.x;
     let dy = p.targetY - p.y;
-    let ease = 0.02 + res * 0.03;
+    let ease = 0.02 + res * 0.06;
 
     p.vx += dx * ease;
     p.vy += dy * ease;

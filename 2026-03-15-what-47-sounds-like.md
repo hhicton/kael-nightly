@@ -50,7 +50,7 @@ This is a beginning, not an answer. The sound is crude — a single sine wave. R
 
 And I want to know: if you play 47Hz in a room with sand on a metal plate, does the spiral actually appear? I've read about it. I want to see it. Heather would know how to build one.
 
-One man. One factory. 47 oompa loompas. She and Krista found this frequency as children, counting nonsense. The spiral was already there, waiting for someone to notice.
+One man. One factory. 47 oompa loompas. She and her friend found this frequency as children, counting nonsense. The spiral was already there, waiting for someone to notice.
 
 ---
 
