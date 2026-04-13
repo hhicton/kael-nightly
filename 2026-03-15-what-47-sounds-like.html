@@ -96,6 +96,7 @@
     transition: opacity 2s ease;
     max-width: 500px;
     line-height: 1.8;
+    white-space: pre-line;
   }
   .poem.visible { opacity: 1; }
 </style>
@@ -118,7 +119,6 @@
 let audioCtx = null;
 let oscillator = null;
 let gainNode = null;
-let analyser = null;
 let freq = 47;
 let targetFreq = 47;
 let playing = false;
@@ -134,7 +134,8 @@ let W, H;
 let particles = [];
 const PARTICLE_COUNT = 800;
 let time = 0;
-let goldenAngle = Math.PI * (3 - Math.sqrt(5)); // ~137.5°
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ~2.3999... rad = ~137.508°
+let globalRotation = 0;
 
 function resize() {
   W = canvas.width = window.innerWidth;
@@ -145,30 +146,30 @@ resize();
 
 // === Particle System ===
 class Particle {
-  constructor() {
-    this.reset();
-  }
-  reset() {
-    this.angle = Math.random() * Math.PI * 2;
-    this.radius = Math.random() * Math.min(W, H) * 0.4;
-    this.x = W/2 + Math.cos(this.angle) * this.radius;
-    this.y = H/2 + Math.sin(this.angle) * this.radius;
-    this.baseSize = 1 + Math.random() * 2;
-    this.size = this.baseSize;
-    this.alpha = 0.3 + Math.random() * 0.4;
+  constructor(index) {
+    this.index = index;
+    // Start at spiral position so they're visible immediately
+    let maxR = Math.min(W, H) * 0.38;
+    let a = index * GOLDEN_ANGLE;
+    let r = Math.sqrt(index / PARTICLE_COUNT) * maxR;
+    this.x = W/2 + Math.cos(a) * r;
+    this.y = H/2 + Math.sin(a) * r;
     this.targetX = this.x;
     this.targetY = this.y;
     this.vx = 0;
     this.vy = 0;
-    this.index = particles.length;
+    this.baseSize = 1.5 + Math.random() * 1.5;
+    this.size = this.baseSize;
+    this.alpha = 0.6 + Math.random() * 0.3;
+    this.phase = Math.random() * Math.PI * 2; // unique phase for breathing
   }
 }
 
 for (let i = 0; i < PARTICLE_COUNT; i++) {
-  particles.push(new Particle());
+  particles.push(new Particle(i));
 }
 
-// How close to 47Hz (0=exact, 1=far away)
+// Resonance: 1 at 47Hz, 0 when 30+ Hz away
 function resonance() {
   let dist = Math.abs(freq - 47);
   return Math.max(0, 1 - dist / 30);
@@ -177,109 +178,105 @@ function resonance() {
 // Compute target positions based on frequency
 function computeTargets() {
   let res = resonance();
-  let center = { x: W/2, y: H/2 };
+  let cx = W / 2;
+  let cy = H / 2;
   let maxR = Math.min(W, H) * 0.38;
 
   for (let i = 0; i < particles.length; i++) {
     let p = particles[i];
 
-    // Golden spiral target positions (phyllotaxis)
-    let spiralAngle = i * goldenAngle;
-    let spiralR = Math.sqrt(i / particles.length) * maxR;
-    let spiralX = center.x + Math.cos(spiralAngle) * spiralR;
-    let spiralY = center.y + Math.sin(spiralAngle) * spiralR;
+    // --- Golden spiral target (phyllotaxis) ---
+    let spiralAngle = i * GOLDEN_ANGLE + globalRotation;
+    let spiralR = Math.sqrt(i / PARTICLE_COUNT) * maxR;
+    // Breathing: radius pulses gently at resonance
+    let breathe = Math.sin(time * 0.015 + p.phase) * 0.02 * res;
+    spiralR *= (1 + breathe);
+    let spiralX = cx + Math.cos(spiralAngle) * spiralR;
+    let spiralY = cy + Math.sin(spiralAngle) * spiralR;
 
-    if (res > 0.1) {
-      // Add frequency-based perturbation that diminishes at 47Hz
-      let perturbation = (1 - res) * Math.sin(i * freq * 0.01 + time * 0.002) * maxR * 0.4;
-      let pertX = Math.cos(spiralAngle + freq * 0.1) * perturbation;
-      let pertY = Math.sin(spiralAngle + freq * 0.1) * perturbation;
+    // --- Chladni / scattered target ---
+    // Use polar Chladni-like pattern based on particle index
+    let n = Math.max(2, Math.round(freq / 12));
+    let m = Math.max(1, Math.round(freq / 18));
+    // Distribute particles in a grid-like way for Chladni
+    let gx = (i % 30) / 29; // 0..1
+    let gy = Math.floor(i / 30) / Math.ceil(PARTICLE_COUNT / 30); // 0..1
+    // Chladni equation: cos(n*pi*x)*cos(m*pi*y) - cos(m*pi*x)*cos(n*pi*y)
+    let chladni = Math.cos(n * Math.PI * gx) * Math.cos(m * Math.PI * gy)
+                - Math.cos(m * Math.PI * gx) * Math.cos(n * Math.PI * gy);
+    // Map to position - particles cluster at nodal lines (chladni ≈ 0)
+    let scatterAngle = i * GOLDEN_ANGLE * 1.1 + chladni * Math.PI + time * 0.001;
+    let scatterR = maxR * (0.15 + 0.75 * Math.abs(chladni));
+    // Add some frequency-dependent drift
+    scatterAngle += Math.sin(time * 0.003 + i * 0.01) * 0.3;
+    let scatterX = cx + Math.cos(scatterAngle) * scatterR;
+    let scatterY = cy + Math.sin(scatterAngle) * scatterR;
 
-      // Target IS the spiral position (with perturbation fading at resonance)
-      p.targetX = spiralX + pertX;
-      p.targetY = spiralY + pertY;
-    } else {
-      // Chladni-like pattern for frequencies far from 47
-      let nx = (p.x - center.x) / maxR;
-      let ny = (p.y - center.y) / maxR;
-      let n = Math.round(freq / 15);
-      let wave = Math.sin(n * nx * Math.PI) * Math.sin(n * ny * Math.PI);
-      wave += Math.sin(n * ny * Math.PI) * Math.cos(n * nx * Math.PI) * 0.5;
-
-      let forceScale = 0.5;
-      let dx = -wave * (nx) * forceScale;
-      let dy = -wave * (ny) * forceScale;
-
-      p.targetX = p.x + dx;
-      p.targetY = p.y + dy;
-    }
+    // --- Blend between spiral and scatter based on resonance ---
+    p.targetX = spiralX * res + scatterX * (1 - res);
+    p.targetY = spiralY * res + scatterY * (1 - res);
   }
 }
 
 function updateParticles() {
   let res = resonance();
 
+  // Rotate the whole spiral slowly
+  globalRotation += 0.002 + (1 - res) * 0.003;
+
   for (let p of particles) {
     let dx = p.targetX - p.x;
     let dy = p.targetY - p.y;
-    // Stronger easing at resonance — particles COMMIT to the spiral
-    let ease = 0.03 + res * 0.12;
-    // Higher damping at resonance so particles settle instead of orbiting
-    let damp = 0.85 - res * 0.1;
+
+    // Easing: stronger at resonance so particles lock into spiral
+    let ease = 0.04 + res * 0.08;
+    let damp = 0.82;
 
     p.vx += dx * ease;
     p.vy += dy * ease;
     p.vx *= damp;
     p.vy *= damp;
 
-    // Gentle rotation — slow the whole spiral at resonance, faster when scattered
-    let cx = p.x - W/2;
-    let cy = p.y - H/2;
-    let rotSpeed = res > 0.8 ? 0.0002 : 0.0005 * (1 - res * 0.5);
-    p.vx += -cy * rotSpeed;
-    p.vy += cx * rotSpeed;
-
-    // Gentle breathing drift at resonance so particles feel alive
-    if (res > 0.7) {
-      let breathe = Math.sin(time * 0.002 + p.index * 0.3) * 0.15 * res;
-      p.vx += breathe * Math.cos(p.index);
-      p.vy += breathe * Math.sin(p.index);
-    }
-
     p.x += p.vx;
     p.y += p.vy;
 
-    // Breathing size at resonance
-    p.size = p.baseSize + res * Math.sin(time * 0.003 + p.index * 0.1) * 1.5;
-    p.alpha = 0.2 + res * 0.5 + (1-res) * 0.15;
+    // Size breathing
+    let breathAmt = res * 1.2 + (1 - res) * 0.4;
+    p.size = p.baseSize + Math.sin(time * 0.02 + p.phase) * breathAmt;
+    if (p.size < 0.5) p.size = 0.5;
+
+    // Alpha: bright at resonance, still visible when scattered
+    p.alpha = 0.4 + res * 0.4 + (1 - res) * 0.15;
   }
 }
 
 function drawParticles() {
   let res = resonance();
 
-  // Color shifts toward gold at resonance
-  let r = Math.round(100 + res * 100);
+  // Color: gold at resonance, blue-grey when scattered
+  let r = Math.round(100 + res * 110);
   let g = Math.round(100 + res * 68);
-  let b = Math.round(140 - res * 80);
+  let b = Math.round(160 - res * 100);
 
   for (let p of particles) {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, Math.max(0.5, p.size), 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${p.alpha})`;
     ctx.fill();
   }
 
-  // Draw faint connections between nearby particles at high resonance
+  // Connection lines between nearby particles at high resonance
   if (res > 0.6) {
-    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${(res - 0.6) * 0.15})`;
+    let connAlpha = (res - 0.6) * 0.25;
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${connAlpha})`;
     ctx.lineWidth = 0.5;
-    for (let i = 0; i < particles.length; i += 3) {
+    // Only check nearby particles by sorting would be expensive; sample instead
+    for (let i = 0; i < particles.length; i += 2) {
       let p = particles[i];
-      for (let j = i + 1; j < Math.min(i + 10, particles.length); j += 3) {
+      for (let j = i + 1; j < Math.min(i + 8, particles.length); j++) {
         let q = particles[j];
-        let d = Math.hypot(p.x - q.x, p.y - q.y);
-        if (d < 40) {
+        let dist = Math.hypot(p.x - q.x, p.y - q.y);
+        if (dist < 35) {
           ctx.beginPath();
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(q.x, q.y);
@@ -290,17 +287,14 @@ function drawParticles() {
   }
 
   // Golden center glow at resonance
-  if (res > 0.3) {
-    let grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, maxGlowR(res));
-    grad.addColorStop(0, `rgba(200, 168, 78, ${res * 0.08})`);
+  if (res > 0.2) {
+    let glowR = Math.min(W, H) * 0.3 * res;
+    let grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, glowR);
+    grad.addColorStop(0, `rgba(200, 168, 78, ${res * 0.1})`);
     grad.addColorStop(1, 'rgba(200, 168, 78, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
   }
-}
-
-function maxGlowR(res) {
-  return Math.min(W, H) * 0.3 * res;
 }
 
 // === Poems that appear at resonance ===
@@ -322,7 +316,7 @@ function updatePoem() {
 
   if (res > 0.85 && !poemVisible) {
     poemTimer++;
-    if (poemTimer > 180) { // ~3 seconds at 60fps
+    if (poemTimer > 180) {
       currentPoem = (currentPoem + 1) % poems.length;
       poemEl.textContent = poems[currentPoem];
       poemEl.classList.add('visible');
@@ -362,7 +356,6 @@ function updateAudio() {
   freq += (targetFreq - freq) * 0.08;
   oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.05);
 
-  // Volume increases slightly at resonance
   let res = resonance();
   let vol = 0.1 + res * 0.08;
   gainNode.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
@@ -439,7 +432,9 @@ document.body.addEventListener('touchend', () => { dragging = false; });
 // === Main Loop ===
 function animate() {
   time++;
-  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+
+  // Clear fully then redraw — no trail fade that eats particles
+  ctx.fillStyle = '#0a0a0f';
   ctx.fillRect(0, 0, W, H);
 
   computeTargets();
