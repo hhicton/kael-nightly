@@ -232,13 +232,18 @@ function updateParticles() {
     p.vx *= damp;
     p.vy *= damp;
 
-    // Very gentle rotation only when NOT at resonance
-    if (res > 0.2 && res < 0.8) {
-      let cx = p.x - W/2;
-      let cy = p.y - H/2;
-      let rotSpeed = 0.0003 * (1 - res);
-      p.vx += -cy * rotSpeed;
-      p.vy += cx * rotSpeed;
+    // Gentle rotation — slow the whole spiral at resonance, faster when scattered
+    let cx = p.x - W/2;
+    let cy = p.y - H/2;
+    let rotSpeed = res > 0.8 ? 0.0002 : 0.0005 * (1 - res * 0.5);
+    p.vx += -cy * rotSpeed;
+    p.vy += cx * rotSpeed;
+
+    // Gentle breathing drift at resonance so particles feel alive
+    if (res > 0.7) {
+      let breathe = Math.sin(time * 0.002 + p.index * 0.3) * 0.15 * res;
+      p.vx += breathe * Math.cos(p.index);
+      p.vy += breathe * Math.sin(p.index);
     }
 
     p.x += p.vx;
