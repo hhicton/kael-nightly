@@ -222,18 +222,21 @@ function updateParticles() {
   for (let p of particles) {
     let dx = p.targetX - p.x;
     let dy = p.targetY - p.y;
-    let ease = 0.02 + res * 0.06;
+    // Stronger easing at resonance — particles COMMIT to the spiral
+    let ease = 0.03 + res * 0.12;
+    // Higher damping at resonance so particles settle instead of orbiting
+    let damp = 0.85 - res * 0.1;
 
     p.vx += dx * ease;
     p.vy += dy * ease;
-    p.vx *= 0.92;
-    p.vy *= 0.92;
+    p.vx *= damp;
+    p.vy *= damp;
 
-    // Gentle rotation - stronger at resonance
-    if (res > 0.2) {
+    // Very gentle rotation only when NOT at resonance
+    if (res > 0.2 && res < 0.8) {
       let cx = p.x - W/2;
       let cy = p.y - H/2;
-      let rotSpeed = 0.0005 * res;
+      let rotSpeed = 0.0003 * (1 - res);
       p.vx += -cy * rotSpeed;
       p.vy += cx * rotSpeed;
     }
