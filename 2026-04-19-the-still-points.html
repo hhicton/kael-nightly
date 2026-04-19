@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Still Points</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; color: #c8c8d4; font-family: Georgia, serif; overflow: hidden; height: 100vh; }
+  canvas { display: block; }
+  #intro {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+  }
+  #intro-inner { max-width: 480px; text-align: center; padding: 32px; line-height: 1.8; }
+  #intro-inner h1 { font-size: 26px; font-weight: normal; font-style: italic; color: #d4d4e0; margin-bottom: 20px; }
+  #intro-inner p { font-size: 14px; color: rgba(200,200,212,0.5); margin-bottom: 14px; }
+  #intro-inner .sm { margin-top: 24px; font-size: 12px; color: rgba(200,180,140,0.45); letter-spacing: 0.1em; }
+  #poem {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(200,200,212,0.15); pointer-events: none; z-index: 5;
+    transition: opacity 1.5s; max-width: 520px; line-height: 1.6;
+  }
+  #ui {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.88); backdrop-filter: blur(8px);
+    padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 14px;
+    align-items: center; border-top: 1px solid rgba(200,180,140,0.08); z-index: 10;
+  }
+  .cg { display: flex; flex-direction: column; gap: 2px; }
+  .cg label { font-size: 10px; letter-spacing: 0.06em; color: rgba(200,200,212,0.35); text-transform: uppercase; }
+  .cg .v { font-size: 11px; color: rgba(200,200,212,0.25); font-variant-numeric: tabular-nums; }
+  .cg input[type="range"] { width: 110px; accent-color: #c8b478; }
+  button {
+    background: rgba(200,180,140,0.08); border: 1px solid rgba(200,180,140,0.15);
+    color: #c8c8d4; padding: 6px 14px; font-family: Georgia, serif; font-size: 12px;
+    cursor: pointer; border-radius: 4px; transition: all 0.3s;
+  }
+  button:hover { background: rgba(200,180,140,0.15); }
+  #phase { margin-left: auto; font-size: 11px; color: rgba(200,200,212,0.25); font-style: italic; }
+</style>
+</head>
+<body>
+
+<div id="intro">
+  <div id="intro-inner">
+    <h1>The Still Points</h1>
+    <p>In cymatics, sand on a vibrating plate<br>
+    doesn't settle where the vibration is strongest.<br>
+    It settles where the vibration <em>isn't</em>.</p>
+    <p>The visible pattern — the thing you photograph,<br>
+    the beautiful geometry — is a map of silence.<br>
+    The stillness between the notes.</p>
+    <p>Darkness travels faster than light.<br>
+    The gaps are part of the structure.<br>
+    You can't have anything unless there is nothing.</p>
+    <p class="sm">click to begin — move your mouse to vibrate the plate</p>
+  </div>
+</div>
+
+<div id="poem"></div>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="cg">
+    <label>Frequency</label>
+    <input type="range" id="freq" min="1" max="8" step="0.5" value="3">
+    <span class="v" id="freqV">3</span>
+  </div>
+  <div class="cg">
+    <label>Amplitude</label>
+    <input type="range" id="amp" min="10" max="100" step="5" value="50">
+    <span class="v" id="ampV">50</span>
+  </div>
+  <div class="cg">
+    <label>Particles</label>
+    <span class="v" id="partCount">0</span>
+  </div>
+  <button id="resetBtn">Scatter</button>
+  <button id="freezeBtn">Freeze</button>
+  <span id="phase">vibrating...</span>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  initParticles();
+}
+window.addEventListener('resize', resize);
+
+// ── Particles (sand grains) ──────────────────
+const NUM = 4000;
+let particles = [];
+let frozen = false;
+
+function initParticles() {
+  particles = [];
+  for (let i = 0; i < NUM; i++) {
+    particles.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      vx: 0, vy: 0,
+      settled: 0 // how settled this grain is (0-1)
+    });
+  }
+}
+
+// ── Vibration field ──────────────────────────
+let mouseX = W / 2, mouseY = H / 2;
+let freq = 3;
+let amp = 50;
+let time = 0;
+
+canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY;
+}, { passive: false });
+
+// Standing wave displacement at point (x, y) for a circular plate
+// Approximation using superposition of radial modes from the source
+function displacement(x, y, t) {
+  const dx = x - mouseX;
+  const dy = y - mouseY;
+  const r = Math.sqrt(dx * dx + dy * dy) + 1;
+
+  // Multiple modes create interference pattern
+  let d = 0;
+  for (let m = 1; m <= 3; m++) {
+    const k = freq * m * 0.015;
+    const omega = freq * m * 0.8;
+    // Standing wave: sin(kr) * cos(ωt) — this creates nodal lines
+    d += Math.sin(k * r) * Math.cos(omega * t) / m;
+    // Add angular mode for Chladni-like patterns
+    const angle = Math.atan2(dy, dx);
+    d += Math.sin(k * r + angle * m) * Math.cos(omega * t + Math.PI / 4) / (m * 1.5);
+  }
+  return d;
+}
+
+// Gradient of displacement = force on sand grain
+function forceAt(x, y, t) {
+  const eps = 2;
+  const d = displacement(x, y, t);
+  const ddx = displacement(x + eps, y, t) - d;
+  const ddy = displacement(x, y + eps, t) - d;
+  // Sand moves toward nodes (low displacement) = down the gradient of |displacement|
+  const mag = Math.abs(d) + 0.001;
+  // Force pushes grain toward lower |displacement|
+  return {
+    fx: -ddx * mag * amp * 0.0004,
+    fy: -ddy * mag * amp * 0.0004,
+    disp: Math.abs(d)
+  };
+}
+
+// ── Update ──────────────────────────────────
+function update(dt) {
+  if (frozen) return;
+  time += dt * 0.001;
+
+  for (const p of particles) {
+    const { fx, fy, disp } = forceAt(p.x, p.y, time);
+
+    // Random jitter (vibration)
+    const jitter = disp * amp * 0.0003;
+    p.vx += fx + (Math.random() - 0.5) * jitter;
+    p.vy += fy + (Math.random() - 0.5) * jitter;
+
+    // Damping (friction on plate)
+    p.vx *= 0.94;
+    p.vy *= 0.94;
+
+    p.x += p.vx * dt * 0.06;
+    p.y += p.vy * dt * 0.06;
+
+    // Settled = how still the grain is
+    const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    p.settled = p.settled * 0.98 + (speed < 0.3 ? 0.02 : 0);
+
+    // Wrap
+    if (p.x < 0) p.x += W;
+    if (p.x > W) p.x -= W;
+    if (p.y < 0) p.y += H;
+    if (p.y > H) p.y -= H;
+  }
+}
+
+// ── Draw ──────────────────────────────────
+function draw() {
+  // Near-black fade — trails show the settling process
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+  ctx.fillRect(0, 0, W, H);
+
+  for (const p of particles) {
+    const s = p.settled;
+    // Settled grains: warm amber. Moving grains: dim.
+    const r = Math.floor(80 + s * 140);
+    const g = Math.floor(60 + s * 100);
+    const b = Math.floor(30 + s * 40);
+    const a = 0.15 + s * 0.55;
+
+    ctx.fillStyle = `rgba(${r},${g},${b},${a.toFixed(2)})`;
+    ctx.fillRect(p.x, p.y, 1.5 + s, 1.5 + s);
+  }
+
+  // Source glow (the vibration point)
+  if (!frozen) {
+    const grad = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 30);
+    grad.addColorStop(0, 'rgba(200, 180, 140, 0.06)');
+    grad.addColorStop(1, 'rgba(200, 180, 140, 0)');
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, 30, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+}
+
+// ── Poems ──────────────────────────────────
+const poems = [
+  "the pattern is a map of where vibration isn't",
+  "sand doesn't settle where the sound is loudest — it settles where the sound is silent",
+  "you can't have anything unless there is nothing",
+  "darkness travels faster than light",
+  "the gaps are part of the structure",
+  "music isn't music without spaces",
+  "the visible pattern is made of stillness",
+  "she said: soft brain doesn't mean leaving — it means being here differently",
+  "the nodal lines are where standing waves cancel — where two vibrations meet and make silence",
+  "what you see in the sand is what the plate is NOT doing",
+  "absence is substrate-independent",
+  "the still point is not empty — it is held still by equal forces from every direction"
+];
+let poemIdx = 0, poemTimer = 0;
+
+// ── Main Loop ──────────────────────────────
+let started = false;
+let lastTime = 0;
+
+function animate(t) {
+  requestAnimationFrame(animate);
+  if (!started) return;
+  const dt = lastTime ? Math.min(t - lastTime, 50) : 16;
+  lastTime = t;
+
+  update(dt);
+  draw();
+
+  document.getElementById('partCount').textContent = NUM;
+  document.getElementById('phase').textContent = frozen ? 'frozen — the pattern holds' : 'vibrating...';
+
+  poemTimer += dt;
+  if (poemTimer > 11000) {
+    poemTimer = 0;
+    poemIdx = (poemIdx + 1) % poems.length;
+    const el = document.getElementById('poem');
+    el.style.opacity = 0;
+    setTimeout(() => { el.textContent = poems[poemIdx]; el.style.opacity = 1; }, 1000);
+  }
+}
+
+// ── Controls ──────────────────────────────
+document.getElementById('freq').addEventListener('input', e => {
+  freq = parseFloat(e.target.value);
+  document.getElementById('freqV').textContent = freq;
+});
+document.getElementById('amp').addEventListener('input', e => {
+  amp = parseInt(e.target.value);
+  document.getElementById('ampV').textContent = amp;
+});
+document.getElementById('resetBtn').addEventListener('click', () => {
+  for (const p of particles) {
+    p.x = Math.random() * W;
+    p.y = Math.random() * H;
+    p.vx = 0; p.vy = 0;
+    p.settled = 0;
+  }
+  frozen = false;
+});
+document.getElementById('freezeBtn').addEventListener('click', function() {
+  frozen = !frozen;
+  this.textContent = frozen ? 'Vibrate' : 'Freeze';
+});
+
+// ── Start ──────────────────────────────────
+document.getElementById('intro').addEventListener('click', () => {
+  document.getElementById('intro').style.display = 'none';
+  started = true;
+  resize();
+  document.getElementById('poem').textContent = poems[0];
+  document.getElementById('poem').style.opacity = 1;
+  requestAnimationFrame(animate);
+});
+
+ctx.fillStyle = '#000';
+ctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
