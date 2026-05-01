@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three Feet</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #c8c8d4;
+    font-family: Georgia, 'Times New Roman', serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas { display: block; }
+  #text {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    font-style: italic;
+    font-size: 14px;
+    color: rgba(200, 200, 212, 0.4);
+    pointer-events: none;
+    transition: opacity 1.5s;
+    max-width: 600px;
+    line-height: 1.7;
+  }
+  #intro {
+    position: fixed; inset: 0;
+    background: rgba(10, 10, 15, 0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+    transition: opacity 1.5s;
+  }
+  #intro-inner {
+    max-width: 480px; text-align: center; padding: 32px; line-height: 1.9;
+  }
+  #intro-inner h1 {
+    font-size: 24px; font-weight: normal; font-style: italic;
+    color: #d4d4e0; margin-bottom: 24px;
+  }
+  #intro-inner p {
+    font-size: 13px; color: rgba(200, 200, 212, 0.5); margin-bottom: 14px;
+  }
+  #intro-inner .start {
+    margin-top: 32px; font-size: 12px;
+    color: rgba(100, 140, 200, 0.5); letter-spacing: 0.1em;
+  }
+</style>
+</head>
+<body>
+<div id="intro" onclick="begin()">
+  <div id="intro-inner">
+    <h1>Three Feet</h1>
+    <p>Two lights in a dark room.</p>
+    <p>Move the mouse to move yourself.<br>The other light responds.</p>
+    <p>Watch what happens to the space between.</p>
+    <p class="start">click to enter</p>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="text"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const textEl = document.getElementById('text');
+let W, H;
+let started = false;
+let time = 0;
+
+// You (blue) — mouse controlled
+let you = { x: 0, y: 0, col: [100, 160, 230] };
+// Her (amber) — responds to you
+let her = { x: 0, y: 0, col: [220, 170, 90] };
+// Her target — where she's heading
+let herTarget = { x: 0, y: 0 };
+// The between — the gold that forms in proximity
+let blend = { x: 0, y: 0, intensity: 0 };
+
+let mouseX = 0, mouseY = 0;
+let closestDist = Infinity;
+let closestTime = 0;
+let stayTime = 0; // how long they've been close
+let phase = 0; // narrative phase
+
+const phrases = [
+  { dist: 400, text: "Two lights in a room." },
+  { dist: 280, text: "She notices you." },
+  { dist: 180, text: "The space between begins to warm." },
+  { dist: 120, text: "Something shifts. Not closer. Quieter." },
+  { dist: 80, text: "Everything you are points at her." },
+  { dist: 45, text: "Three feet." },
+  { dist: 25, text: "You didn't flinch." },
+  { dist: 12, text: "" } // silence at arrival
+];
+let currentPhrase = -1;
+
+// Trail history
+let youTrail = [];
+let herTrail = [];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  if (!started) {
+    you.x = W * 0.35; you.y = H * 0.5;
+    her.x = W * 0.65; her.y = H * 0.5;
+    herTarget.x = her.x; herTarget.y = her.y;
+    mouseX = you.x; mouseY = you.y;
+  }
+}
+
+window.addEventListener('resize', resize);
+canvas.addEventListener('mousemove', e => {
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  mouseX = e.touches[0].clientX;
+  mouseY = e.touches[0].clientY;
+}, { passive: false });
+
+function begin() {
+  const intro = document.getElementById('intro');
+  intro.style.opacity = '0';
+  setTimeout(() => { intro.style.display = 'none'; }, 1500);
+  started = true;
+  resize();
+  loop();
+}
+
+function herBehavior(dt) {
+  // She responds to your position — drawn toward but not chasing
+  // Maintains her own rhythm, own breathing
+  const dx = you.x - her.x;
+  const dy = you.y - her.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  // Her own gentle drift
+  const drift = time * 0.0003;
+  const driftX = Math.sin(drift * 1.7) * 30;
+  const driftY = Math.cos(drift * 1.3) * 20;
+
+  // Attraction — gentle, not desperate
+  const attraction = Math.min(0.15, 80 / (dist + 50));
+  herTarget.x = her.x + dx * attraction + driftX * 0.02;
+  herTarget.y = her.y + dy * attraction + driftY * 0.02;
+
+  // But if you get very close, she doesn't crowd — she settles
+  if (dist < 60) {
+    // Slight offset — she doesn't overlap, she's *beside*
+    const angle = Math.atan2(dy, dx) + Math.PI + 0.3;
+    herTarget.x = you.x + Math.cos(angle) * 35;
+    herTarget.y = you.y + Math.sin(angle) * 35;
+  }
+
+  // Smooth movement
+  her.x += (herTarget.x - her.x) * 0.02;
+  her.y += (herTarget.y - her.y) * 0.02;
+}
+
+function updateBlend() {
+  const dx = you.x - her.x;
+  const dy = you.y - her.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  blend.x = (you.x + her.x) / 2;
+  blend.y = (you.y + her.y) / 2;
+
+  // Intensity increases as distance decreases
+  const targetIntensity = Math.max(0, 1 - dist / 250);
+  blend.intensity += (targetIntensity - blend.intensity) * 0.03;
+
+  // Track closest approach
+  if (dist < closestDist) {
+    closestDist = dist;
+    closestTime = time;
+  }
+
+  // Track stay time at close range
+  if (dist < 80) {
+    stayTime += 16;
+  } else {
+    stayTime = Math.max(0, stayTime - 8);
+  }
+
+  // Update narrative
+  for (let i = phrases.length - 1; i >= 0; i--) {
+    if (dist <= phrases[i].dist && i > currentPhrase) {
+      currentPhrase = i;
+      textEl.style.opacity = '0';
+      setTimeout(() => {
+        textEl.textContent = phrases[i].text;
+        textEl.style.opacity = '1';
+      }, 800);
+      break;
+    }
+  }
+
+  // If they pull away after being close, show something
+  if (currentPhrase >= 5 && dist > 200) {
+    textEl.style.opacity = '0';
+    setTimeout(() => {
+      textEl.textContent = "She's still there.";
+      textEl.style.opacity = '1';
+    }, 1200);
+    currentPhrase = 1; // reset but remember
+  }
+
+  return dist;
+}
+
+function drawLight(x, y, col, radius, pulse) {
+  const r = radius + Math.sin(time * 0.002 + pulse) * 3;
+
+  // Outer glow
+  const g1 = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+  g1.addColorStop(0, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.08)`);
+  g1.addColorStop(0.5, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.03)`);
+  g1.addColorStop(1, 'transparent');
+  ctx.fillStyle = g1;
+  ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
+
+  // Inner glow
+  const g2 = ctx.createRadialGradient(x, y, 0, x, y, r * 1.5);
+  g2.addColorStop(0, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.5)`);
+  g2.addColorStop(0.6, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.15)`);
+  g2.addColorStop(1, 'transparent');
+  ctx.fillStyle = g2;
+  ctx.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+
+  // Core
+  const g3 = ctx.createRadialGradient(x, y, 0, x, y, r * 0.5);
+  g3.addColorStop(0, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.9)`);
+  g3.addColorStop(1, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.3)`);
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = g3;
+  ctx.fill();
+}
+
+function drawBetween(dist) {
+  if (blend.intensity < 0.01) return;
+
+  // The gold between them
+  const gold = [230, 200, 100];
+  const alpha = blend.intensity * 0.4;
+
+  // Blend glow at midpoint
+  const r = 30 + blend.intensity * 50 + Math.sin(time * 0.003) * 5;
+  const g = ctx.createRadialGradient(blend.x, blend.y, 0, blend.x, blend.y, r);
+  g.addColorStop(0, `rgba(${gold[0]}, ${gold[1]}, ${gold[2]}, ${alpha})`);
+  g.addColorStop(0.5, `rgba(${gold[0]}, ${gold[1]}, ${gold[2]}, ${alpha * 0.3})`);
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.fillRect(blend.x - r, blend.y - r, r * 2, r * 2);
+
+  // Connection line — faint, breathing
+  if (blend.intensity > 0.15) {
+    const lineAlpha = (blend.intensity - 0.15) * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(you.x, you.y);
+    ctx.lineTo(her.x, her.y);
+    ctx.strokeStyle = `rgba(${gold[0]}, ${gold[1]}, ${gold[2]}, ${lineAlpha})`;
+    ctx.lineWidth = 1 + blend.intensity * 2;
+    ctx.stroke();
+  }
+
+  // When very close and staying — the warmth spreads
+  if (stayTime > 2000 && dist < 80) {
+    const warmth = Math.min(1, (stayTime - 2000) / 8000);
+    const wr = 100 + warmth * 200;
+    const wg = ctx.createRadialGradient(blend.x, blend.y, 0, blend.x, blend.y, wr);
+    wg.addColorStop(0, `rgba(${gold[0]}, ${gold[1]}, ${gold[2]}, ${warmth * 0.12})`);
+    wg.addColorStop(0.6, `rgba(${gold[0]}, ${gold[1]}, ${gold[2]}, ${warmth * 0.04})`);
+    wg.addColorStop(1, 'transparent');
+    ctx.fillStyle = wg;
+    ctx.fillRect(blend.x - wr, blend.y - wr, wr * 2, wr * 2);
+  }
+}
+
+function drawTrails() {
+  // Faint trails showing where each light has been
+  const maxTrail = 120;
+
+  youTrail.push({ x: you.x, y: you.y });
+  herTrail.push({ x: her.x, y: her.y });
+  if (youTrail.length > maxTrail) youTrail.shift();
+  if (herTrail.length > maxTrail) herTrail.shift();
+
+  for (let i = 0; i < youTrail.length - 1; i++) {
+    const alpha = (i / youTrail.length) * 0.06;
+    ctx.beginPath();
+    ctx.arc(youTrail[i].x, youTrail[i].y, 2, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(100, 160, 230, ${alpha})`;
+    ctx.fill();
+  }
+  for (let i = 0; i < herTrail.length - 1; i++) {
+    const alpha = (i / herTrail.length) * 0.06;
+    ctx.beginPath();
+    ctx.arc(herTrail[i].x, herTrail[i].y, 2, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(220, 170, 90, ${alpha})`;
+    ctx.fill();
+  }
+}
+
+function loop() {
+  if (!started) return;
+  time += 16;
+
+  // Move you toward mouse (smooth)
+  you.x += (mouseX - you.x) * 0.06;
+  you.y += (mouseY - you.y) * 0.06;
+
+  herBehavior(16);
+  const dist = updateBlend();
+
+  // Clear with slight persistence for trails
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  drawTrails();
+  drawBetween(dist);
+  drawLight(her.x, her.y, her.col, 12, 0);
+  drawLight(you.x, you.y, you.col, 12, Math.PI);
+
+  requestAnimationFrame(loop);
+}
+
+resize();
+</script>
+</body>
+</html>
