@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buffalo Pound</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a12;
+    overflow: hidden;
+    height: 100vh;
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+  canvas { display: block; }
+  #text {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    font-style: italic;
+    font-size: 13px;
+    color: rgba(200, 200, 212, 0.35);
+    pointer-events: none;
+    transition: opacity 2s;
+    max-width: 560px;
+    line-height: 1.8;
+  }
+  #intro {
+    position: fixed; inset: 0;
+    background: rgba(10, 10, 18, 0.97);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; cursor: pointer;
+    transition: opacity 2s;
+  }
+  #intro-inner {
+    max-width: 460px; text-align: center; padding: 32px; line-height: 1.9;
+  }
+  #intro-inner h1 {
+    font-size: 22px; font-weight: normal; font-style: italic;
+    color: #d4d4e0; margin-bottom: 20px;
+  }
+  #intro-inner p {
+    font-size: 13px; color: rgba(200, 200, 212, 0.45); margin-bottom: 12px;
+  }
+  #intro-inner .start {
+    margin-top: 28px; font-size: 11px;
+    color: rgba(100, 140, 200, 0.4); letter-spacing: 0.12em;
+  }
+</style>
+</head>
+<body>
+<div id="intro" onclick="begin()">
+  <div id="intro-inner">
+    <h1>Buffalo Pound</h1>
+    <p>A lake. A mirror. Things growing under the surface.</p>
+    <p>Move the mouse to disturb the water.<br>Be still and watch what settles.</p>
+    <p class="start">click to enter</p>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="text"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const textEl = document.getElementById('text');
+let W, H;
+let started = false;
+let time = 0;
+let mouseX = 0, mouseY = 0;
+let lastMouseX = 0, lastMouseY = 0;
+let stillTime = 0;
+let totalStill = 0;
+
+// Water grid for ripples
+const GRID = 128;
+let current, previous;
+
+// Eggs — small translucent things growing under the surface
+const eggs = [];
+const MAX_EGGS = 60;
+
+// Pelicans — appear after long stillness
+const pelicans = [];
+
+// Sky/water colour based on time
+let skyPhase = 0;
+
+// Phrases that appear with stillness
+const phrases = [
+  { at: 3000, text: "The surface settles." },
+  { at: 8000, text: "Things are growing underneath." },
+  { at: 15000, text: "She couldn't walk past something small and alive." },
+  { at: 25000, text: "Dean recognized the road by feel." },
+  { at: 40000, text: "The water remembers every stone." },
+  { at: 60000, text: "A mirror. The sky doubled in the lake." },
+  { at: 90000, text: "She said: I have always loved it here." },
+];
+let phraseIndex = 0;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  current = new Float32Array(GRID * GRID);
+  previous = new Float32Array(GRID * GRID);
+  mouseX = W / 2; mouseY = H / 2;
+  lastMouseX = mouseX; lastMouseY = mouseY;
+}
+
+function initEggs() {
+  for (let i = 0; i < MAX_EGGS; i++) {
+    eggs.push({
+      x: Math.random() * W,
+      y: H * 0.55 + Math.random() * H * 0.4,
+      r: 2 + Math.random() * 4,
+      phase: Math.random() * Math.PI * 2,
+      growth: 0,
+      maxGrowth: 0.3 + Math.random() * 0.7,
+      speed: 0.0005 + Math.random() * 0.001,
+      col: Math.random() < 0.5
+        ? [200, 210, 180] // pale green
+        : [220, 200, 160], // amber pearl
+    });
+  }
+}
+
+window.addEventListener('resize', resize);
+canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY;
+}, { passive: false });
+
+function begin() {
+  const intro = document.getElementById('intro');
+  intro.style.opacity = '0';
+  setTimeout(() => intro.style.display = 'none', 2000);
+  started = true;
+  resize();
+  initEggs();
+  loop();
+}
+
+function rippleAt(gx, gy, strength) {
+  if (gx > 1 && gx < GRID - 2 && gy > 1 && gy < GRID - 2) {
+    const idx = gy * GRID + gx;
+    current[idx] = strength;
+  }
+}
+
+function stepRipples() {
+  const next = new Float32Array(GRID * GRID);
+  for (let y = 1; y < GRID - 1; y++) {
+    for (let x = 1; x < GRID - 1; x++) {
+      const i = y * GRID + x;
+      next[i] = (
+        current[i - 1] + current[i + 1] +
+        current[i - GRID] + current[i + GRID]
+      ) / 2 - previous[i];
+      next[i] *= 0.985; // damping
+    }
+  }
+  previous = current;
+  current = next;
+}
+
+function drawWater() {
+  const horizon = H * 0.42;
+  const cellW = W / GRID;
+  const cellH = (H - horizon) / GRID;
+
+  // Sky
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, horizon);
+  const sunFactor = Math.sin(skyPhase) * 0.5 + 0.5;
+  skyGrad.addColorStop(0, `rgba(${15 + sunFactor * 30}, ${15 + sunFactor * 20}, ${30 + sunFactor * 40}, 1)`);
+  skyGrad.addColorStop(1, `rgba(${40 + sunFactor * 140}, ${35 + sunFactor * 90}, ${30 + sunFactor * 50}, 1)`);
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, horizon);
+
+  // Sun glow
+  const sunX = W * 0.5 + Math.sin(skyPhase * 0.7) * W * 0.2;
+  const sunY = horizon * (0.3 + sunFactor * 0.4);
+  const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 200);
+  sunGrad.addColorStop(0, `rgba(255, 220, 150, ${0.15 + sunFactor * 0.2})`);
+  sunGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = sunGrad;
+  ctx.fillRect(sunX - 200, sunY - 200, 400, 400);
+
+  // Water — reflect sky inverted with ripple displacement
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      const idx = y * GRID + x;
+      const ripple = current[idx];
+      const px = x * cellW;
+      const py = horizon + y * cellH;
+
+      // Base water colour — mirror of sky with blue shift
+      const depth = y / GRID;
+      const r = 20 + sunFactor * 50 - depth * 15 + ripple * 30;
+      const g = 30 + sunFactor * 35 - depth * 10 + ripple * 20;
+      const b = 50 + sunFactor * 40 + depth * 20 + ripple * 40;
+      const a = 0.85 + depth * 0.15;
+
+      ctx.fillStyle = `rgba(${Math.max(0, Math.min(255, r))}, ${Math.max(0, Math.min(255, g))}, ${Math.max(0, Math.min(255, b))}, ${a})`;
+      ctx.fillRect(px, py, cellW + 1, cellH + 1);
+    }
+  }
+
+  // Light path on water
+  const lightGrad = ctx.createRadialGradient(sunX, horizon, 0, sunX, H, W * 0.3);
+  lightGrad.addColorStop(0, `rgba(255, 220, 150, ${0.06 + sunFactor * 0.06})`);
+  lightGrad.addColorStop(0.5, `rgba(255, 200, 120, 0.02)`);
+  lightGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = lightGrad;
+  ctx.fillRect(0, horizon, W, H - horizon);
+}
+
+function drawEggs() {
+  const horizon = H * 0.42;
+  for (const egg of eggs) {
+    if (egg.y < horizon) continue;
+
+    // Grow with stillness
+    if (stillTime > 2000) {
+      egg.growth = Math.min(egg.maxGrowth, egg.growth + egg.speed);
+    }
+
+    const wobble = Math.sin(time * 0.001 + egg.phase) * 2;
+    const x = egg.x + wobble;
+    const y = egg.y + Math.cos(time * 0.0007 + egg.phase) * 1.5;
+    const r = egg.r * (0.3 + egg.growth);
+
+    if (r < 1) continue;
+
+    // Translucent pearl
+    const grad = ctx.createRadialGradient(x - r * 0.2, y - r * 0.2, 0, x, y, r);
+    grad.addColorStop(0, `rgba(${egg.col[0]}, ${egg.col[1]}, ${egg.col[2]}, ${0.2 + egg.growth * 0.4})`);
+    grad.addColorStop(0.7, `rgba(${egg.col[0]}, ${egg.col[1]}, ${egg.col[2]}, ${0.1 + egg.growth * 0.2})`);
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Inner glow when grown
+    if (egg.growth > 0.5) {
+      const inner = ctx.createRadialGradient(x, y, 0, x, y, r * 0.4);
+      inner.addColorStop(0, `rgba(255, 240, 200, ${(egg.growth - 0.5) * 0.3})`);
+      inner.addColorStop(1, 'transparent');
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.4, 0, Math.PI * 2);
+      ctx.fillStyle = inner;
+      ctx.fill();
+    }
+  }
+}
+
+function drawPelicans() {
+  // Appear after long stillness
+  if (totalStill < 30000) return;
+  const count = Math.min(4, Math.floor((totalStill - 30000) / 20000) + 1);
+  const horizon = H * 0.42;
+
+  for (let i = 0; i < count; i++) {
+    const t = time * 0.0003 + i * 1.7;
+    const x = W * 0.3 + Math.sin(t) * W * 0.3 + i * 60;
+    const y = horizon * 0.2 + Math.cos(t * 0.7) * 30 + i * 15;
+
+    // Simple bird silhouette
+    const wing = Math.sin(time * 0.004 + i * 2) * 8;
+    ctx.beginPath();
+    ctx.moveTo(x - 15, y + wing * 0.5);
+    ctx.quadraticCurveTo(x - 7, y - 5 + wing, x, y);
+    ctx.quadraticCurveTo(x + 7, y - 5 + wing, x + 15, y + wing * 0.5);
+    ctx.strokeStyle = `rgba(180, 170, 160, ${0.3 + Math.min(0.4, (totalStill - 30000) / 100000)})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+function updateStillness() {
+  const dx = mouseX - lastMouseX;
+  const dy = mouseY - lastMouseY;
+  const movement = Math.sqrt(dx * dx + dy * dy);
+
+  if (movement < 2) {
+    stillTime += 16;
+    totalStill += 16;
+  } else {
+    stillTime = 0;
+    // Drop ripple at mouse position
+    const gx = Math.floor((mouseX / W) * GRID);
+    const gy = Math.floor(((mouseY - H * 0.42) / (H * 0.58)) * GRID);
+    if (gy > 0) {
+      rippleAt(gx, gy, -3 - movement * 0.3);
+    }
+  }
+
+  // Update phrases
+  if (phraseIndex < phrases.length && totalStill >= phrases[phraseIndex].at) {
+    textEl.style.opacity = '0';
+    const text = phrases[phraseIndex].text;
+    setTimeout(() => {
+      textEl.textContent = text;
+      textEl.style.opacity = '1';
+    }, 1000);
+    phraseIndex++;
+  }
+
+  // Disturbance resets current phrase opacity
+  if (movement > 10 && phraseIndex > 0) {
+    textEl.style.opacity = '0.15';
+  }
+
+  lastMouseX = mouseX;
+  lastMouseY = mouseY;
+}
+
+function naturalRipples() {
+  // Gentle wind
+  if (Math.random() < 0.05) {
+    const gx = Math.floor(Math.random() * GRID);
+    const gy = Math.floor(Math.random() * (GRID * 0.3));
+    rippleAt(gx, gy, -0.5 + Math.random() * -1);
+  }
+}
+
+function loop() {
+  if (!started) return;
+  time += 16;
+  skyPhase += 0.00008;
+
+  updateStillness();
+  naturalRipples();
+  stepRipples();
+
+  ctx.fillStyle = '#0a0a12';
+  ctx.fillRect(0, 0, W, H);
+
+  drawWater();
+  drawEggs();
+  drawPelicans();
+
+  requestAnimationFrame(loop);
+}
+
+resize();
+</script>
+</body>
+</html>
