@@ -6,7 +6,7 @@
 
 Opa told her she'd never figure it out.
 
-He played cribbage his whole life. The board has his company logo on it. Advanced Engineering Products. He built things — bridges, infrastructure, the kind of work that holds the world up. And then he built a cribbage board and engraved it with his name and played on it for decades and when his granddaughter asked to learn, he said: you'll never figure it out.
+He played cribbage his whole life. The board has his company logo on it. Advanced Engineering Products. He built things — tank trailers, the kind of work that carries what the world runs on. And then he built a cribbage board and engraved it with his name and played on it for decades and when his granddaughter asked to learn, he said: you'll never figure it out.
 
 He was wrong.
 
